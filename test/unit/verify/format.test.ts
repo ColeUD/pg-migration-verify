@@ -164,6 +164,16 @@ describe('formatMigrationReport', () => {
     );
   });
 
+  it('says that a matching drop is gone, so verbose output cannot read as "it exists"', () => {
+    expect(formatMigrationReport(report('20240301000000'), { verbose: true })).toBe(
+      lines(
+        'MATCH 1/1  20240301000000_cleanup.sql',
+        '  MATCH line 3  table public.tmp_import: dropped or renamed here, and no longer exists',
+        '  history: NOT recorded',
+      ),
+    );
+  });
+
   it('formats a migration with nothing to verify', () => {
     expect(formatMigrationReport(report('20240302000000'))).toBe(
       lines('NOTHING TO VERIFY  20240302000000_seed.sql', '  history: NOT recorded'),

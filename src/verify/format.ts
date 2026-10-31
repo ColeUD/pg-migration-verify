@@ -176,7 +176,10 @@ function checkText(c: ObjectCheck): string {
   const o = c.object;
   switch (c.status) {
     case 'match':
-      return describeObject(o);
+      // A matching drop means the object is gone; the bare name would read as "it exists".
+      return o.expect === 'absent'
+        ? `${describeObject(o)}: dropped or renamed here, and no longer exists`
+        : describeObject(o);
     case 'missing':
       return describeExpected(o);
     case 'different':

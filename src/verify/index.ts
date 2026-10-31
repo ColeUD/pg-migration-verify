@@ -9,4 +9,5 @@ export {
   formatSummary,
   type ReportFormatOptions,
 } from './format.js';
+export { describeExpected } from './describe.js';
 export { typesEqual } from './types-equal.js';
