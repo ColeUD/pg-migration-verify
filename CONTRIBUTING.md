@@ -4,7 +4,7 @@ Thanks for helping. Bug reports with a synthetic migration that reproduces the p
 
 ## Setup
 
-Node.js 22 or later.
+Node.js 22 or later. CI runs the checks on Node 22, 24 and 26.
 
 ```bash
 npm ci
@@ -21,10 +21,14 @@ npm run lint
 npm run format:check   # npm run format fixes it
 npm run test:unit
 npm run test:integration
-npm run build && npm run test:smoke
+npm run build && npm run test:smoke && npm run test:pack
 ```
 
 Integration tests use `TEST_DATABASE_URL` when it is set, otherwise an embedded Postgres 18 (see [Development](README.md#development) for the Windows path-length workaround). CI also runs them against Postgres 15 and 17, and validates the plugin with `npx -y @anthropic-ai/claude-code@2.1.316 plugin validate . --strict`.
+
+## Dependencies
+
+`npm-shrinkwrap.json` is the lockfile (there is no `package-lock.json`). It is published with the package, so `npx pg-migration-verify@<version>` installs exactly the tree CI tested. Runtime dependencies in `package.json` are pinned to exact versions; `test/unit/packaging.test.ts` enforces both. Let Dependabot propose updates, or bump a version by hand and run `npm install`.
 
 ## Layout
 
@@ -39,6 +43,7 @@ Integration tests use `TEST_DATABASE_URL` when it is set, otherwise an embedded 
 | `test/unit/`                  | Fast tests, no database. Parser fixtures are in `test/unit/parser/fixtures/`.             |
 | `test/integration/`           | Real Postgres: parser/catalog agreement, catalog reads as a no-grants role, the demo app. |
 | `scripts/smoke.mjs`           | Starts the built bin over stdio and calls it as an MCP client.                            |
+| `scripts/check-pack.mjs`      | Checks the file list `npm pack` would publish.                                            |
 
 `docs/example-output.txt` is written by `test/integration/demo-app.test.ts`. If you change the report format on purpose, refresh it with `npx vitest run --project integration -u` and review the diff.
 
@@ -52,6 +57,17 @@ Integration tests use `TEST_DATABASE_URL` when it is set, otherwise an embedded 
 ## Code style
 
 Strict TypeScript, ESM with `.js` import extensions, explicit return types on exported functions, and doc comments that explain why rather than what. ESLint and Prettier settle the rest.
+
+## Releasing
+
+The version appears in four files, and `test/unit/packaging.test.ts` fails unless they agree:
+
+- `package.json` (`version`, which `--version` prints);
+- `.claude-plugin/plugin.json` (`version`; Claude Code only updates installed plugins when it changes);
+- `.mcp.json` (`pg-migration-verify@<version>` in the `npx` arguments);
+- `README.md` (the `npx` snippets).
+
+Bump all four in one commit, then `npm publish`, which cleans, builds and packs with the shrinkwrap.
 
 ## Commits
 

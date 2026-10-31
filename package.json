@@ -13,12 +13,22 @@
     "claude-code"
   ],
   "license": "MIT",
+  "author": "ColeUD",
+  "homepage": "https://github.com/OWNER/pg-migration-verify#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/OWNER/pg-migration-verify.git"
+  },
+  "bugs": {
+    "url": "https://github.com/OWNER/pg-migration-verify/issues"
+  },
   "type": "module",
   "bin": {
     "pg-migration-verify": "dist/index.js"
   },
   "files": [
     "dist",
+    "npm-shrinkwrap.json",
     "README.md",
     "LICENSE"
   ],
@@ -26,7 +36,8 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "npm run clean && tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint .",
     "format": "prettier --write .",
@@ -35,14 +46,15 @@
     "test:unit": "vitest run --project unit",
     "test:integration": "vitest run --project integration",
     "test:smoke": "node scripts/smoke.mjs",
-    "prepublishOnly": "npm run build"
+    "test:pack": "node scripts/check-pack.mjs",
+    "prepack": "npm run build"
   },
   "dependencies": {
     "@modelcontextprotocol/server": "2.4.0",
     "libpg-query": "18.2.2",
-    "pg": "^8.23.1",
+    "pg": "8.23.1",
     "pgsql-deparser": "18.4.1",
-    "zod": "^4.6.7"
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

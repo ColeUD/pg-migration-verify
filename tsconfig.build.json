@@ -4,8 +4,10 @@
     "noEmit": false,
     "rootDir": "src",
     "outDir": "dist",
-    "declaration": true,
-    "sourceMap": true
+    // A bin-only package: nothing imports its types, and maps would point at src/, which is not
+    // published.
+    "declaration": false,
+    "sourceMap": false
   },
   "include": ["src"]
 }

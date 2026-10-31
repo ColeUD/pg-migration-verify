@@ -11,9 +11,9 @@
       "dependencies": {
         "@modelcontextprotocol/server": "2.4.0",
         "libpg-query": "18.2.2",
-        "pg": "^8.23.1",
+        "pg": "8.23.1",
         "pgsql-deparser": "18.4.1",
-        "zod": "^4.6.7"
+        "zod": "4.6.7"
       },
       "bin": {
         "pg-migration-verify": "dist/index.js"
