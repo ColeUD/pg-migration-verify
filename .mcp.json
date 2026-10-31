@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "pgmv": {
+      "command": "npx",
+      "args": ["-y", "pg-migration-verify@0.1.0"],
+      "env": {
+        "PGMV_DATABASE_URL": "${user_config.database_url}",
+        "PGMV_PROJECT_DIR": "${CLAUDE_PROJECT_DIR}"
+      }
+    }
+  }
+}

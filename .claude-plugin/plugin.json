@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "pg-migration-verify",
+  "displayName": "Postgres Migration Verify",
+  "version": "0.1.0",
+  "description": "Check that Postgres/Supabase migrations were really applied: compares the objects each migration should create, alter or drop against pg_catalog. Read-only by construction.",
+  "author": { "name": "ColeUD" },
+  "homepage": "https://github.com/OWNER/pg-migration-verify",
+  "repository": "https://github.com/OWNER/pg-migration-verify",
+  "license": "MIT",
+  "keywords": ["postgres", "postgresql", "supabase", "migrations", "schema", "mcp"],
+  "userConfig": {
+    "database_url": {
+      "type": "string",
+      "title": "Database URL",
+      "description": "Postgres connection string, ideally for a dedicated read-only role. Leave empty to use $PGMV_DATABASE_URL or $DATABASE_URL from your environment.",
+      "sensitive": true
+    }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "pg-migration-verify",
+  "description": "Marketplace for the pg-migration-verify plugin.",
+  "owner": { "name": "ColeUD" },
+  "plugins": [
+    {
+      "name": "pg-migration-verify",
+      "source": "./",
+      "description": "Verify that Postgres/Supabase migrations were really applied (read-only).",
+      "category": "database",
+      "tags": ["postgres", "supabase", "migrations"]
+    }
+  ]
+}
