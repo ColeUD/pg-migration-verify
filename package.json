@@ -1,0 +1,58 @@
+{
+  "name": "pg-migration-verify",
+  "version": "0.1.0",
+  "description": "MCP server that checks whether Postgres/Supabase migrations were really applied, by comparing what each migration should create against pg_catalog. Read-only by construction.",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "postgres",
+    "postgresql",
+    "supabase",
+    "migrations",
+    "schema",
+    "claude-code"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "pg-migration-verify": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:unit": "vitest run --project unit",
+    "test:integration": "vitest run --project integration",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "2.4.0",
+    "libpg-query": "18.2.2",
+    "pg": "^8.23.1",
+    "pgsql-deparser": "18.4.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@modelcontextprotocol/client": "^2.4.0",
+    "@types/node": "^22.20.5",
+    "@types/pg": "^8.23.1",
+    "embedded-postgres": "18.6.0-beta.19",
+    "eslint": "^10.14.0",
+    "prettier": "^3.9.10",
+    "typescript": "6.0.3",
+    "typescript-eslint": "^8.72.1",
+    "vitest": "^5.0.5"
+  }
+}
