@@ -28,6 +28,7 @@ describe('redactSecrets', () => {
     ['the host and port', `connect ECONNREFUSED ${HOST}:${PORT}`],
     ['a user:password@ fragment without a scheme', `at app_user:${ENCODED_PASSWORD}@${HOST}`],
     ['several URLs in one message', `${URL_} and postgresql://other:pw@elsewhere.test/db`],
+    ['the URL-encoded connection string', `bad value ${encodeURIComponent(URL_)}`],
   ])('removes %s', (_, text) => {
     const redacted = redactSecrets(text, URL_);
     expectNoSecrets(redacted);
@@ -39,6 +40,11 @@ describe('redactSecrets', () => {
     expect(redactSecrets(text, URL_)).toBe(
       'try [redacted connection string] or [redacted connection string]',
     );
+  });
+
+  it('keeps a bare scheme, which carries no connection details', () => {
+    const text = 'set PGMV_DATABASE_URL to a postgres:// URL';
+    expect(redactSecrets(text, URL_)).toBe(text);
   });
 
   it('removes a password with unencoded special characters from an invalid URL', () => {

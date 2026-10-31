@@ -1,5 +1,5 @@
 import type { RecordedHistory, RecordedMigration } from '../model.js';
-import type { ReadOnlyDatabase } from './db.js';
+import type { QueryRunner, ReadOnlyDatabase } from './db.js';
 import { DatabaseError } from './errors.js';
 import { HISTORY_TABLE, HISTORY_WITHOUT_NAME, HISTORY_WITH_NAME } from './queries.js';
 
@@ -18,20 +18,29 @@ const NOT_READABLE_REASON =
  * report cannot say whether each file was recorded; the catalog checks still run.
  */
 export async function loadRecordedHistory(db: ReadOnlyDatabase): Promise<RecordedHistory> {
+  return db.readOnly(readRecordedHistory);
+}
+
+/**
+ * `loadRecordedHistory` inside a transaction the caller already opened.
+ *
+ * Run it last in that transaction: if the read fails with 42501 anyway, Postgres aborts the
+ * transaction, so later queries in it would fail. (The failure itself is reported as
+ * `not_readable`, like in `loadRecordedHistory`.)
+ */
+export async function readRecordedHistory(q: QueryRunner): Promise<RecordedHistory> {
   try {
-    return await db.readOnly(async (q): Promise<RecordedHistory> => {
-      const [table] = await q.run(HISTORY_TABLE);
-      if (table === undefined) return { status: 'missing', table: HISTORY_TABLE_NAME };
-      if (!table.readable) {
-        return { status: 'not_readable', table: HISTORY_TABLE_NAME, reason: NOT_READABLE_REASON };
-      }
-      const migrations: RecordedMigration[] = table.has_name_column
-        ? (await q.run(HISTORY_WITH_NAME)).map((r) => ({ version: r.version, name: r.name }))
-        : (await q.run(HISTORY_WITHOUT_NAME)).map((r) => ({ version: r.version, name: null }));
-      // Code-point order: versions are digit strings, and the server's collation must not matter.
-      migrations.sort((a, b) => (a.version < b.version ? -1 : a.version > b.version ? 1 : 0));
-      return { status: 'ok', table: HISTORY_TABLE_NAME, migrations };
-    });
+    const [table] = await q.run(HISTORY_TABLE);
+    if (table === undefined) return { status: 'missing', table: HISTORY_TABLE_NAME };
+    if (!table.readable) {
+      return { status: 'not_readable', table: HISTORY_TABLE_NAME, reason: NOT_READABLE_REASON };
+    }
+    const migrations: RecordedMigration[] = table.has_name_column
+      ? (await q.run(HISTORY_WITH_NAME)).map((r) => ({ version: r.version, name: r.name }))
+      : (await q.run(HISTORY_WITHOUT_NAME)).map((r) => ({ version: r.version, name: null }));
+    // Code-point order: versions are digit strings, and the server's collation must not matter.
+    migrations.sort((a, b) => (a.version < b.version ? -1 : a.version > b.version ? 1 : 0));
+    return { status: 'ok', table: HISTORY_TABLE_NAME, migrations };
   } catch (err) {
     if (err instanceof DatabaseError && err.category === 'permission') {
       return { status: 'not_readable', table: HISTORY_TABLE_NAME, reason: NOT_READABLE_REASON };

@@ -6,6 +6,6 @@ export { createDatabase } from './db.js';
 export type { DatabaseOptions, QueryRunner, ReadOnlyDatabase } from './db.js';
 export { DatabaseError, redactSecrets, sanitizeDatabaseError } from './errors.js';
 export type { DatabaseErrorCategory } from './errors.js';
-export { HISTORY_TABLE_NAME, loadRecordedHistory } from './history.js';
+export { HISTORY_TABLE_NAME, loadRecordedHistory, readRecordedHistory } from './history.js';
 export type { CatalogQuery } from './queries.js';
-export { loadCatalogSnapshot } from './snapshot.js';
+export { loadCatalogSnapshot, readCatalogSnapshot } from './snapshot.js';

@@ -171,13 +171,20 @@ function connectionError(
 
 /**
  * Last line of defence for any text that might quote the connection string: removes the exact
- * string, every `postgres://` / `postgresql://` URL, every `user:password@` fragment, the
- * password in raw, URL-decoded and URL-encoded form, and the host and port.
+ * string (also URL-encoded), every `postgres://` / `postgresql://` URL, every `user:password@`
+ * fragment, the password in raw, URL-decoded and URL-encoded form, and the host and port.
  */
 export function redactSecrets(text: string, connectionString: string): string {
   let result = text;
-  if (connectionString !== '') result = result.replaceAll(connectionString, REDACTED_URL);
-  result = result.replace(/postgres(?:ql)?:\/\/[^\s'"<>]*/gi, REDACTED_URL);
+  if (connectionString !== '') {
+    // Also URL-encoded (e.g. echoed inside a query string): there the host follows `%40`, which
+    // the host pattern below does not treat as a boundary.
+    for (const form of [connectionString, encodeURIComponent(connectionString)]) {
+      result = result.replaceAll(form, REDACTED_URL);
+    }
+  }
+  // `+`, not `*`: a bare scheme ("set it to a postgres:// URL") has nothing to hide.
+  result = result.replace(/postgres(?:ql)?:\/\/[^\s'"<>]+/gi, REDACTED_URL);
   result = result.replace(/[^\s:/@'"[\]]+:[^\s/@'"]+@/g, `${REDACTED}@`);
 
   const { secrets, host, port } = connectionParts(connectionString);
