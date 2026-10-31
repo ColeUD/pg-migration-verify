@@ -91,7 +91,7 @@ export interface IndexObject extends ObjectBase {
   unique: boolean | null;
   /** Access method, e.g. `btree`, `gin`. null = not asserted. */
   method: string | null;
-  /** Key columns in order. Expressions are rendered as deparsed SQL in parentheses. */
+  /** Key columns in order: plain column names, expressions as deparsed SQL wrapped in parentheses. */
   columns: string[] | null;
 }
 
@@ -278,7 +278,7 @@ export interface CatalogSnapshot {
     unique: boolean;
     primary: boolean;
     method: string;
-    /** Column names; expressions as returned by `pg_get_indexdef(oid, n, true)`. */
+    /** Key columns in order: plain column names, expressions as `(${pg_get_indexdef(oid, n, true)})`. */
     columns: string[];
   }[];
   constraints: {
