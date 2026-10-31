@@ -5,7 +5,6 @@ Ideas that are deliberately out of the current scope. None of them changes the [
 ## Better answers
 
 - **Suggested fix SQL.** For MISSING objects, return the statements of the migration that would create them, as text for a person to review and run. Never executed by the server.
-- **Collapse superseded children.** When a later migration drops a table, report one SUPERSEDED line for the table instead of one per column, constraint and index.
 - **Exact lines for nested objects.** Report a missing column at its own line rather than at its `CREATE TABLE`, and statements inside a `DO` block at their own line.
 
 ## More checks
@@ -15,6 +14,7 @@ Ideas that are deliberately out of the current scope. None of them changes the [
 - **Publications.** Check `CREATE/ALTER PUBLICATION` membership against `pg_publication_tables` (Supabase Realtime relies on it).
 - **Column defaults.** Compare defaults by normalizing both sides: the parsed expression and `pg_get_expr(adbin, adrelid)`.
 - **Policy expressions.** Compare `USING` and `WITH CHECK` through a normalized deparse of both sides, instead of command, roles and mode only.
+- **CHECK expressions.** Compare a normalized deparse of the parsed expression with `pg_get_constraintdef`, the same approach as policy expressions, instead of the referenced columns only.
 - **Partial-index predicates and `INCLUDE` columns.** The same normalized-expression comparison applied to indexes.
 - **Sequences of serial columns.** Check that the implicit sequence exists and is owned by the column.
 

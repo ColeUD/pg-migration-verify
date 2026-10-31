@@ -28,19 +28,23 @@ Target: `$ARGUMENTS` (empty means every migration).
 3. Present the result:
    - Start with the summary line(s): `MATCH n/n` or `MISMATCH m/n` per migration, and the totals,
      including migrations "applied but NOT recorded" and "recorded in history but MISMATCH".
+     A `MATCH*` (listed as "NOT recorded, and their MATCH does not show they ran") is no proof
+     either way: say that it cannot be told whether such a file was applied.
    - For each `MISMATCH`, list what is `MISSING`, `DIFFERENT` or `UNEXPECTED` (dropped or renamed
      by the migration but still present), grouped by migration file, with the statement line each
      object comes from.
-   - Explain `SUPERSEDED` (a later migration drops or renames the object, so it is checked there
-     instead), `UNVERIFIABLE` notes (statements such as grants, comments, data changes or dynamic
-     SQL in `DO` blocks that cannot be turned into catalog checks) and `NOTHING TO VERIFY` in one
-     sentence each, only if they occur.
+   - Explain `SUPERSEDED` (a later migration drops or rebuilds the object or what it depends
+     on, so it cannot be checked against this file, or `IF NOT EXISTS` skipped the statement), `UNVERIFIABLE` notes
+     (statements such as grants, comments, data changes or dynamic SQL in `DO` blocks that cannot
+     be turned into catalog checks) and `NOTHING TO VERIFY` in one sentence each, only if they
+     occur.
    - Report history discrepancies from `diff_history` (only in repo, only in database, renamed).
 4. If something is missing, you may point out which statements of which migration would need to
    be re-applied, quoted as text for the user to review and run themselves.
 
 Never write to the database, never run SQL, and never offer to apply a fix automatically. If no
 database URL is configured, say so and explain how to provide one: the plugin's `database_url`
-option (`claude plugin configure pg-migration-verify@pg-migration-verify`) or the `DATABASE_URL`
-environment variable; without the plugin, `PGMV_DATABASE_URL` or `DATABASE_URL`. Recommend a
-dedicated read-only role (README section "Read-only role").
+option (`/plugin configure pg-migration-verify@pg-migration-verify` inside Claude Code) or the
+`DATABASE_URL` environment variable; without the plugin, `PGMV_DATABASE_URL` or `DATABASE_URL`.
+Recommend a dedicated read-only role (README section "Read-only role") and `sslmode=verify-full`
+in the URL, since without `sslmode` the connection is not encrypted.
