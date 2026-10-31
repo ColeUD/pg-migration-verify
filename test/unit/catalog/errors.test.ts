@@ -128,11 +128,69 @@ describe('sanitizeDatabaseError', () => {
       /connection refused/,
     ],
     [
-      'driver connect timeout',
+      'driver connect timeout (pg.Client wording)',
+      new Error('timeout expired'),
+      'connection',
+      /connection timed out\); the host did not answer/,
+    ],
+    [
+      'driver connect timeout (pg-pool wording)',
       new Error('Connection terminated due to connection timeout'),
       'connection',
       /connection timed out/,
     ],
+    [
+      'no reply within query_timeout',
+      new Error('Query read timeout'),
+      'timeout',
+      /^no reply from the server within the time limit/,
+    ],
+    [
+      'unlisted socket error naming the resolved address',
+      Object.assign(systemError('EADDRNOTAVAIL', 'connect EADDRNOTAVAIL 203.0.113.7:5432'), {
+        syscall: 'connect',
+        address: '203.0.113.7',
+      }),
+      'connection',
+      /^could not connect to the database server \(address not available\)$/,
+    ],
+    [
+      'socket error with a code nobody listed',
+      Object.assign(systemError('EFOO', 'connect EFOO 203.0.113.7:5432'), {
+        syscall: 'connect',
+        address: '203.0.113.7',
+      }),
+      'connection',
+      /^could not connect to the database server \(network error EFOO\)$/,
+    ],
+    [
+      'socket error without a code',
+      Object.assign(new Error('connect 203.0.113.7:5432'), { syscall: 'connect' }),
+      'connection',
+      /\(network error\)$/,
+    ],
+    [
+      'TLS handshake against a server that does not speak TLS',
+      systemError(
+        'EPROTO',
+        'write EPROTO A80C0000:error:0A00010B:SSL routines:tls_validate_record_header:wrong version number',
+      ),
+      'connection',
+      /TLS handshake failed.*may not speak TLS/,
+    ],
+    [
+      'IPv6+IPv4 connect failure with an unlisted code',
+      new AggregateError([systemError('EADDRNOTAVAIL', `connect EADDRNOTAVAIL ::1:${PORT}`)], ''),
+      'connection',
+      /address not available/,
+    ],
+    [
+      'empty AggregateError without codes',
+      new AggregateError([new Error('first attempt failed')], ''),
+      'query',
+      /^first attempt failed$/,
+    ],
+    ['error with an empty message', new Error(''), 'query', /^unknown error$/],
     [
       'self-signed certificate',
       systemError('SELF_SIGNED_CERT_IN_CHAIN', 'self-signed certificate in certificate chain'),
@@ -241,7 +299,10 @@ describe('sanitizeDatabaseError', () => {
   });
 
   it.each(cases)('never leaks connection details: %s', (_, err) => {
-    expectNoSecrets(sanitizeDatabaseError(err, URL_).message);
+    const message = sanitizeDatabaseError(err, URL_).message;
+    expectNoSecrets(message);
+    // Node names the resolved address, which redaction of the host name cannot know about.
+    expect(message).not.toMatch(/203\.0\.113\.7|5432|SSL routines/);
   });
 
   it('keeps the SQLSTATE of server errors', () => {

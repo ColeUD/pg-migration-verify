@@ -39,6 +39,13 @@ const NETWORK_ERRORS: Readonly<Record<string, string>> = {
   ECONNRESET: 'connection reset by the server',
   EHOSTUNREACH: 'host unreachable',
   ENETUNREACH: 'network unreachable',
+  ENETDOWN: 'network is down',
+  EADDRNOTAVAIL: 'address not available',
+  EADDRINUSE: 'local address in use',
+  EACCES: 'connection blocked by the local system or a firewall',
+  EPERM: 'connection blocked by the local system or a firewall',
+  ECONNABORTED: 'connection aborted',
+  EPIPE: 'connection closed by the server',
 };
 
 /** TLS certificate failures; `ERR_TLS_CERT_ALTNAME_INVALID` messages name the host. */
@@ -52,6 +59,11 @@ const TLS_CERTIFICATE_ERRORS: Readonly<Record<string, string>> = {
   CERT_NOT_YET_VALID: 'certificate is not yet valid',
   ERR_TLS_CERT_ALTNAME_INVALID: 'certificate does not match the host name',
 };
+
+const CONNECT_TIMEOUT_HINT =
+  'the host did not answer in time; check the host and port, firewalls, and that your network ' +
+  'can reach it (the Supabase direct host db.<ref>.supabase.co is IPv6-only: from an IPv4-only ' +
+  'network use the Supavisor pooler host)';
 
 const SSL_MODE_HINT =
   'check sslmode in the connection string: verify-full needs the server CA certificate ' +
@@ -78,6 +90,18 @@ export function sanitizeDatabaseError(err: unknown, connectionString: string): D
   if (code !== null && code in TLS_CERTIFICATE_ERRORS) {
     return connectionError(`TLS: ${TLS_CERTIFICATE_ERRORS[code] ?? code}`, SSL_MODE_HINT);
   }
+  // A handshake against something that does not speak TLS; the message is raw OpenSSL text.
+  if (code === 'EPROTO' || (code !== null && /^ERR_(SSL|TLS)_/.test(code))) {
+    return connectionError(
+      'TLS handshake failed',
+      `${SSL_MODE_HINT}; the server or port may not speak TLS`,
+    );
+  }
+  // Any other socket-level failure: Node's message names the resolved address (an IP the host
+  // redaction cannot know), so only the code is kept, whatever the code is.
+  if (isSystemError(err)) {
+    return connectionError(code === null ? 'network error' : `network error ${code}`);
+  }
   // The checks below match driver messages. That is safe only because server errors, whose text
   // may mention anything (a table called "certificates"), were handled above.
   if (/does not support SSL/i.test(message)) {
@@ -89,8 +113,17 @@ export function sanitizeDatabaseError(err: unknown, connectionString: string): D
   if (/certificate/i.test(message)) {
     return connectionError('TLS certificate rejected', SSL_MODE_HINT);
   }
-  if (/^Connection terminated due to connection timeout/i.test(message)) {
-    return connectionError('connection timed out');
+  // `timeout expired` is what a bare pg.Client reports when connectionTimeoutMillis runs out; the
+  // longer text is pg-pool's wording of the same thing.
+  if (/^(timeout expired$|Connection terminated due to connection timeout)/i.test(message)) {
+    return connectTimeoutError(null);
+  }
+  // pg's query_timeout: the server stopped answering in the middle of a session.
+  if (/^Query read timeout/i.test(message)) {
+    return new DatabaseError(
+      'timeout',
+      'no reply from the server within the time limit; the connection may have dropped',
+    );
   }
   if (/^Connection terminated/i.test(message)) {
     return connectionError('connection closed unexpectedly');
@@ -101,7 +134,8 @@ export function sanitizeDatabaseError(err: unknown, connectionString: string): D
       'authentication failed: the server requires a password, but the connection string has none',
     );
   }
-  return new DatabaseError('query', redactSecrets(message, connectionString));
+  const redacted = redactSecrets(message, connectionString);
+  return new DatabaseError('query', redacted === '' ? 'unknown error' : redacted);
 }
 
 /** Maps an error reported by the Postgres server itself (it carries a SQLSTATE `code`). */
@@ -158,6 +192,18 @@ function fromServerError(
     code === null ? redacted : `${redacted} (SQLSTATE ${code})`,
     code,
   );
+}
+
+/**
+ * The connection or its startup handshake did not complete in time. `timeoutMs` is the limit, when
+ * known. Typical causes are a firewall or a host the network cannot route to.
+ */
+export function connectTimeoutError(timeoutMs: number | null): DatabaseError {
+  const after =
+    timeoutMs === null
+      ? ''
+      : ` after ${timeoutMs % 1000 === 0 ? `${timeoutMs / 1000} s` : `${timeoutMs} ms`}`;
+  return connectionError(`connection timed out${after}`, CONNECT_TIMEOUT_HINT);
 }
 
 function connectionError(
@@ -263,6 +309,22 @@ function errorCode(err: unknown): string | null {
   return null;
 }
 
+/**
+ * Whether `err` (or an error inside an AggregateError) comes from Node's socket layer: those carry
+ * a `syscall`, an `address` or an `E...` code, and their messages name the address.
+ */
+function isSystemError(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return false;
+  if (err instanceof AggregateError && err.errors.some((inner) => isSystemError(inner))) {
+    return true;
+  }
+  return (
+    ('syscall' in err && typeof err.syscall === 'string') ||
+    ('address' in err && typeof err.address === 'string') ||
+    ('code' in err && typeof err.code === 'string' && /^E[A-Z0-9_]+$/.test(err.code))
+  );
+}
+
 /** `pg` builds server errors with the protocol's `severity` field; socket errors have none. */
 function isServerError(err: unknown): boolean {
   return (
@@ -271,6 +333,10 @@ function isServerError(err: unknown): boolean {
 }
 
 function errorMessage(err: unknown): string {
+  // Node leaves the message of a failed multi-address connect empty; the first attempt says more.
+  if (err instanceof AggregateError && err.message === '' && err.errors.length > 0) {
+    return errorMessage(err.errors[0]);
+  }
   if (err instanceof Error) return err.message;
   return typeof err === 'string' ? err : 'unknown error';
 }
