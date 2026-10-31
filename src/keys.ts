@@ -1,4 +1,5 @@
 import type { ExpectedObject } from './model.js';
+import { qualifiedName, quoteIdent, quoteKeyColumn } from './sql-ident.js';
 
 /** Fields an object needs for its identity; everything else about it is an attribute. */
 export type ObjectIdentity =
@@ -90,40 +91,49 @@ export function parentKey(o: ExpectedObject): string | null {
   }
 }
 
-/** Human-readable one-line name, e.g. `column public.profiles.avatar_url`. */
+/**
+ * Human-readable one-line name, e.g. `column public.profiles.avatar_url`. Identifiers are quoted
+ * like `quote_ident()` (`column app."Todo Items"."projectId"`), so a name with spaces or capitals
+ * stays unambiguous and can be pasted back into SQL. Policy names are always quoted: they are
+ * usually sentences.
+ */
 export function describeObject(o: ExpectedObject): string {
   switch (o.kind) {
     case 'schema':
-      return `schema ${o.name}`;
+      return `schema ${quoteIdent(o.name)}`;
     case 'extension':
-      return `extension ${o.name}`;
+      return `extension ${quoteIdent(o.name)}`;
     case 'table':
     case 'view':
     case 'sequence':
-      return `${o.kind} ${o.schema}.${o.name}`;
+      return `${o.kind} ${qualifiedName(o.schema, o.name)}`;
     case 'materialized_view':
-      return `materialized view ${o.schema}.${o.name}`;
+      return `materialized view ${qualifiedName(o.schema, o.name)}`;
     case 'column':
-      return `column ${o.schema}.${o.table}.${o.name}`;
+      return `column ${qualifiedName(o.schema, o.table)}.${quoteIdent(o.name)}`;
     case 'index':
       return o.name !== null
-        ? `index ${o.schema}.${o.name}`
-        : `index on ${o.schema}.${o.table} (${(o.columns ?? []).join(', ')})`;
+        ? `index ${qualifiedName(o.schema, o.name)}`
+        : `index on ${qualifiedName(o.schema, o.table)} ${keyColumnsText(o.columns)}`;
     case 'constraint':
       return o.name !== null
-        ? `constraint ${o.name} on ${o.schema}.${o.table}`
-        : `${(o.constraintType ?? 'constraint').replace('_', ' ')} on ${o.schema}.${o.table} (${(o.columns ?? []).join(', ')})`;
+        ? `constraint ${quoteIdent(o.name)} on ${qualifiedName(o.schema, o.table)}`
+        : `${(o.constraintType ?? 'constraint').replace('_', ' ')} on ${qualifiedName(o.schema, o.table)} ${keyColumnsText(o.columns)}`;
     case 'function':
-      return `${o.isProcedure ? 'procedure' : 'function'} ${o.schema}.${o.name}(${o.argTypes === null ? '...' : o.argTypes.join(', ')})`;
+      return `${o.isProcedure ? 'procedure' : 'function'} ${qualifiedName(o.schema, o.name)}(${o.argTypes === null ? '...' : o.argTypes.join(', ')})`;
     case 'trigger':
-      return `trigger ${o.name} on ${o.schema}.${o.table}`;
+      return `trigger ${quoteIdent(o.name)} on ${qualifiedName(o.schema, o.table)}`;
     case 'rls':
-      return `row level security on ${o.schema}.${o.table}`;
+      return `row level security on ${qualifiedName(o.schema, o.table)}`;
     case 'policy':
-      return `policy "${o.name}" on ${o.schema}.${o.table}`;
+      return `policy "${o.name.replaceAll('"', '""')}" on ${qualifiedName(o.schema, o.table)}`;
     case 'type':
-      return `${o.typeKind === 'enum' ? 'enum type' : 'type'} ${o.schema}.${o.name}`;
+      return `${o.typeKind === 'enum' ? 'enum type' : 'type'} ${qualifiedName(o.schema, o.name)}`;
     case 'enum_value':
-      return `enum value ${o.schema}.${o.typeName}.'${o.value}'`;
+      return `enum value ${qualifiedName(o.schema, o.typeName)}.'${o.value.replaceAll("'", "''")}'`;
   }
+}
+
+function keyColumnsText(columns: readonly string[] | null): string {
+  return `(${(columns ?? []).map(quoteKeyColumn).join(', ')})`;
 }

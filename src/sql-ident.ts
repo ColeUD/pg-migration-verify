@@ -12,3 +12,11 @@ export function quoteIdent(name: string): string {
 export function qualifiedName(schema: string | null, name: string): string {
   return schema === null ? quoteIdent(name) : `${quoteIdent(schema)}.${quoteIdent(name)}`;
 }
+
+/**
+ * An index or constraint key column for display: plain column names quoted like `quoteIdent()`,
+ * expressions (which the model stores as SQL wrapped in parentheses) left as they are.
+ */
+export function quoteKeyColumn(column: string): string {
+  return column.startsWith('(') ? column : quoteIdent(column);
+}

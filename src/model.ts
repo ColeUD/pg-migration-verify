@@ -85,6 +85,11 @@ export interface ColumnObject extends ObjectBase {
 
 export interface IndexObject extends ObjectBase {
   kind: 'index';
+  /**
+   * `''` when the statement does not name the table and the same file did not create the index
+   * (`DROP INDEX`, `ALTER INDEX ... RENAME`): index names are unique per schema, so the name
+   * alone identifies it.
+   */
   table: string;
   /** null for `CREATE INDEX ON t (...)` without a name; matched by table + columns instead. */
   name: string | null;
