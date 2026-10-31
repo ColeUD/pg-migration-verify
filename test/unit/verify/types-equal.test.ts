@@ -1,9 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import {
-  splitSchemaQualifier,
-  typeListsEqual,
-  typesEqual,
-} from '../../../src/verify/types-equal.js';
+import { splitSchemaQualifier } from '../../../src/sql-ident.js';
+import { typeListsEqual, typesEqual } from '../../../src/verify/types-equal.js';
 
 describe('typesEqual', () => {
   it.each([

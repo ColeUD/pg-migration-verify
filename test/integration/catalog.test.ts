@@ -275,7 +275,13 @@ describe('loadCatalogSnapshot', () => {
       name: string,
       type: string,
       columns: string[],
-      references: { schema: string; table: string; columns: string[] } | null = null,
+      references: {
+        schema: string;
+        table: string;
+        columns: string[];
+        onDelete: string;
+        onUpdate: string;
+      } | null = null,
     ) => ({ schema, table, name, type, columns, references });
     expect(sorted(snapshot.constraints)).toEqual(
       sorted([
@@ -288,6 +294,8 @@ describe('loadCatalogSnapshot', () => {
           schema: 'public',
           table: 'profiles',
           columns: ['id'],
+          onDelete: 'cascade',
+          onUpdate: 'no_action',
         }),
         con('public', 'projects', 'projects_owner_name_key', 'unique', ['owner_id', 'name']),
         con('public', 'projects', 'projects_no_overlap', 'exclusion', ['active_during']),
@@ -296,6 +304,8 @@ describe('loadCatalogSnapshot', () => {
           schema: 'public',
           table: 'projects',
           columns: ['id'],
+          onDelete: 'no_action',
+          onUpdate: 'no_action',
         }),
       ]),
     );
@@ -483,6 +493,26 @@ describe('createDatabase', () => {
       await Promise.resolve();
     });
     await expect(leaked!.run(SESSION_SETTINGS)).rejects.toThrow(/after its transaction/);
+  });
+
+  it('reads one snapshot per call, even while another session changes the schema', async () => {
+    const TABLE_COUNT = defineCatalogQuery<{ n: number }>(
+      'test_table_count',
+      `SELECT count(*)::int AS n FROM pg_catalog.pg_class c
+         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public' AND c.relname = 'zz_concurrent'`,
+    );
+    const counts = await db.readOnly(async (q) => {
+      const before = await q.run(TABLE_COUNT);
+      // A migration committing in the middle of a verify run.
+      await applySql(testDb.admin, 'CREATE TABLE public.zz_concurrent (id int)');
+      const after = await q.run(TABLE_COUNT);
+      return [before[0]?.n, after[0]?.n];
+    });
+    // READ COMMITTED would see the table in the second query and tear the snapshot.
+    expect(counts).toEqual([0, 0]);
+    const [now] = await db.readOnly((q) => q.run(TABLE_COUNT));
+    expect(now?.n).toBe(1);
   });
 });
 

@@ -6,8 +6,8 @@
 
 import type { RecordedHistory } from '../model.js';
 import { formatTable, plural } from '../text.js';
-import { compareText, compareVersions } from '../versions.js';
-import type { MigrationListing } from './files.js';
+import { compareText, compareVersions, mixedVersionLengthWarning } from '../versions.js';
+import { isOversized, type MigrationListing } from './files.js';
 import type { HistoryDiff } from './history-diff.js';
 
 /** Hex digits of the sha256 shown in listings: enough to spot an edited file at a glance. */
@@ -34,9 +34,11 @@ export function formatMigrationListing(listing: MigrationListing, dirDisplay: st
 
   if (skipped.length > 0) {
     lines.push('');
-    lines.push(
-      `Skipped ${plural(skipped.length, '.sql file')} (never applied by the Supabase CLI):`,
-    );
+    // Only misnamed files are invisible to the CLI; an oversized one is just not verified.
+    const why = !skipped.some(isOversized)
+      ? ' (never applied by the Supabase CLI)'
+      : ', not verified';
+    lines.push(`Skipped ${plural(skipped.length, '.sql file')}${why}:`);
     lines.push(...indentedTable(skipped.map((s) => [s.fileName, s.reason])));
   }
 
@@ -46,6 +48,9 @@ export function formatMigrationListing(listing: MigrationListing, dirDisplay: st
       `Duplicate versions (each version must belong to one file): ${duplicateVersions.join(', ')}`,
     );
   }
+
+  const mixed = mixedVersionLengthWarning(files);
+  if (mixed !== null) lines.push('', mixed);
 
   return lines.join('\n');
 }

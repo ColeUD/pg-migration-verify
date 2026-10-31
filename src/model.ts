@@ -55,6 +55,21 @@ interface ObjectBase {
   /** Schema the object lives in. For `schema` objects this is the schema's own name. */
   schema: string;
   source: SourceRef;
+  /**
+   * Set on a present object when the same file dropped or renamed away an earlier object with the
+   * same identity before creating this one (`DROP TABLE t; CREATE TABLE t ...`, or the enum
+   * rebuild `ALTER TYPE s RENAME TO s_old; CREATE TYPE s ...`). Points at the statement that
+   * removed the earlier object. Earlier migrations' versions of the object and of its children are
+   * then superseded rather than merged: what the rebuild left out is gone, not missing.
+   */
+  recreated?: SourceRef;
+  /**
+   * Set when the statement does nothing if an object already exists (`CREATE TABLE IF NOT EXISTS`,
+   * `ADD COLUMN IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS`): the key of that object, which for
+   * everything a `CREATE TABLE IF NOT EXISTS` declares is the table. When an earlier migration
+   * already created it, Postgres skipped the statement and it asserts nothing beyond existence.
+   */
+  conditional?: string;
 }
 
 export interface SchemaObject extends ObjectBase {
@@ -98,9 +113,18 @@ export interface IndexObject extends ObjectBase {
   method: string | null;
   /** Key columns in order: plain column names, expressions as deparsed SQL wrapped in parentheses. */
   columns: string[] | null;
+  /**
+   * For an unnamed index: the name Postgres generates for it (`todos_owner_id_idx`), used only to
+   * recognize a later `DROP INDEX` or `ALTER INDEX ... RENAME` that refers to it by that name. A
+   * best guess (Postgres appends a number when the name is taken); never compared with the catalog.
+   */
+  impliedName?: string;
 }
 
 export type ConstraintType = 'primary_key' | 'unique' | 'foreign_key' | 'check' | 'exclusion';
+
+/** A foreign key's referential action (`ON DELETE ...`, `ON UPDATE ...`). */
+export type FkAction = 'no_action' | 'restrict' | 'cascade' | 'set_null' | 'set_default';
 
 export interface ConstraintObject extends ObjectBase {
   kind: 'constraint';
@@ -110,8 +134,23 @@ export interface ConstraintObject extends ObjectBase {
   constraintType: ConstraintType | null;
   /** Constrained columns (for a check constraint: the columns its expression references). */
   columns: string[] | null;
-  /** For foreign keys only. */
-  references: { schema: string; table: string; columns: string[] | null } | null;
+  /**
+   * For foreign keys only. `onDelete`/`onUpdate` are what the statement says, NO ACTION when it
+   * says nothing (null only on objects that do not assert them).
+   */
+  references: {
+    schema: string;
+    table: string;
+    columns: string[] | null;
+    onDelete: FkAction | null;
+    onUpdate: FkAction | null;
+  } | null;
+  /**
+   * For an unnamed constraint: the name Postgres generates for it (`profiles_username_key`), used
+   * only to recognize a later `DROP CONSTRAINT` or `RENAME CONSTRAINT` by that name. A best guess
+   * like {@link IndexObject.impliedName}; never compared with the catalog.
+   */
+  impliedName?: string;
 }
 
 export interface FunctionObject extends ObjectBase {
@@ -207,10 +246,28 @@ export interface Note {
   source: SourceRef;
 }
 
+/**
+ * A RENAME or SET SCHEMA of an object the file did not (re-)create itself, so possibly one an
+ * earlier migration created. The net `objects` only show an unrelated absent/present pair; this
+ * keeps the link, so that earlier migrations' objects follow the rename across files the way they
+ * do within one (`#followRename` in merge.ts): a renamed column keeps the type an earlier file
+ * gave it, and indexes, constraints and foreign keys on it keep being checked under the new name.
+ */
+export interface Rename {
+  /** The object under its old identity (`expect: 'absent'`). */
+  from: ExpectedObject;
+  /** The object under its new identity (`expect: 'present'`). */
+  to: ExpectedObject;
+  /** Schema that unqualified names resolved to at that statement (for bare type names). */
+  searchSchema: string;
+}
+
 export interface ParsedMigration {
   file: string;
   /** Net expectations after applying the file's statements in order (one entry per key). */
   objects: ExpectedObject[];
+  /** Renames of objects this file did not create, in statement order (see {@link Rename}). */
+  renames: Rename[];
   notes: Note[];
   statementCount: number;
 }
@@ -292,7 +349,13 @@ export interface CatalogSnapshot {
     name: string;
     type: ConstraintType;
     columns: string[];
-    references: { schema: string; table: string; columns: string[] } | null;
+    references: {
+      schema: string;
+      table: string;
+      columns: string[];
+      onDelete: FkAction;
+      onUpdate: FkAction;
+    } | null;
   }[];
   functions: {
     schema: string;
@@ -327,11 +390,15 @@ export interface CatalogSnapshot {
 // ---------------------------------------------------------------------------------------------
 
 /**
- * - `match`      : the object is as the migration (plus any later alterations) says.
+ * - `match`      : the object is as the migration (plus any later alterations) says, or as it
+ *                  was before a later migration whose change is not in the database (that one
+ *                  then reports it).
  * - `missing`    : expected present, not found.
  * - `different`  : found, but an asserted attribute differs (see `differences`).
  * - `unexpected` : expected absent (dropped/renamed away), but still exists.
- * - `superseded` : a later migration drops or renames it, so it is not checked against this one.
+ * - `superseded` : a later migration drops it (or rebuilds it, or an IF NOT EXISTS skipped the
+ *                  statement), so it is not checked against this one. Renamed objects are not
+ *                  superseded: they are checked under their new name.
  */
 export type CheckStatus = 'match' | 'missing' | 'different' | 'unexpected' | 'superseded';
 
@@ -341,15 +408,30 @@ export interface Difference {
   actual: string;
 }
 
-export interface ObjectCheck {
+/** Why an object is not checked against its migration, and which statement is responsible. */
+export interface Supersession {
+  /** The migration responsible (for IF NOT EXISTS, the earlier one that created the object). */
+  file: string;
+  line: number;
+  /** e.g. `table public.todos dropped by 20240301000000_x.sql line 3` */
+  reason: string;
+  /**
+   * Key of the object whose drop or re-creation is the cause: the object itself, or what it
+   * depended on (its table, schema, type or function). Checks sharing it share the cause.
+   */
+  byKey: string;
+}
+
+interface CheckBase {
   object: ExpectedObject;
-  status: CheckStatus;
   differences: Difference[];
-  /** For `superseded`: the later migration responsible. */
-  supersededBy?: { file: string; reason: string };
   /** Attributes whose expected value came from a later migration (e.g. `type changed by 0005`). */
   notes: string[];
 }
+
+export type ObjectCheck =
+  | (CheckBase & { status: 'superseded'; supersededBy: Supersession })
+  | (CheckBase & { status: Exclude<CheckStatus, 'superseded'> });
 
 export type MigrationVerdict = 'MATCH' | 'MISMATCH' | 'NOTHING_TO_VERIFY';
 
@@ -361,6 +443,13 @@ export interface MigrationReport {
   /** Checks that count toward `matched / checked` (everything except `superseded`). */
   checked: number;
   matched: number;
+  /**
+   * Matched checks that would fail had this file never run. Drops, a policy re-created with the
+   * same command and roles (expressions are not compared), CREATE OR REPLACE of an existing
+   * function (bodies are not compared) and objects re-added as an earlier migration defined them
+   * all match before the file runs, so a MATCH with no evidence does not show it was applied.
+   */
+  evidence: number;
   checks: ObjectCheck[];
   notes: Note[];
   /** Whether the version appears in the recorded history table (null = history unavailable). */

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { MigrationListing } from '../../../src/migrations/files.js';
+import { tooLargeReason, type MigrationListing } from '../../../src/migrations/files.js';
 import {
   formatHistoryDiff,
   formatMigrationListing,
@@ -40,6 +40,26 @@ describe('formatMigrationListing', () => {
         '  20240102000000  create_todos     0123456789ab',
       ),
     );
+  });
+
+  it('warns that versions of different lengths apply in file-name order', () => {
+    const listing: MigrationListing = {
+      files: [file('10', 'b'), file('9', 'a')],
+      skipped: [],
+      duplicateVersions: [],
+    };
+    expect(formatMigrationListing(listing, 'db').split('\n').at(-1)).toMatch(
+      /^Versions of different lengths: the Supabase CLI applies migrations in file-name order/,
+    );
+  });
+
+  it('marks oversized files as not verified rather than skipped by the CLI', () => {
+    const listing: MigrationListing = {
+      files: [],
+      skipped: [{ fileName: '2024_dump.sql', reason: tooLargeReason() }],
+      duplicateVersions: [],
+    };
+    expect(formatMigrationListing(listing, 'db')).toContain('Skipped 1 .sql file, not verified:');
   });
 
   it('adds skipped files and duplicate versions after the table', () => {

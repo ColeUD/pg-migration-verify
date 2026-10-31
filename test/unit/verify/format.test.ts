@@ -27,7 +27,8 @@ import {
  * A small project history covering every report line kind:
  * - create_todos: all good, one table dropped later (superseded), a GRANT and a BEGIN.
  * - add_todos_extras: recorded in history but broken in four ways.
- * - cleanup: applied but NOT recorded in history (run by hand in the SQL editor).
+ * - cleanup: applied but NOT recorded in history (run by hand in the SQL editor); the new column
+ *   shows that it ran, which the drop alone could not.
  * - seed: data only, nothing to verify.
  */
 const migrations = [
@@ -59,7 +60,10 @@ const migrations = [
     ],
     [note('GrantStmt', 'privileges are not checked', { line: 32 })],
   ),
-  migration('20240301000000_cleanup.sql', [table('tmp_import', { expect: 'absent', line: 3 })]),
+  migration('20240301000000_cleanup.sql', [
+    table('tmp_import', { expect: 'absent', line: 3 }),
+    column('todos', 'done', { dataType: 'boolean', line: 5 }),
+  ]),
   migration(
     '20240302000000_seed.sql',
     [],
@@ -72,6 +76,7 @@ const catalog = snapshot({
   columns: [
     cat.column('todos', 'id', 'uuid', { notNull: true }),
     cat.column('todos', 'title', 'text', { notNull: true }),
+    cat.column('todos', 'done', 'boolean'),
   ],
   indexes: [cat.index('todos', 'todos_owner_idx', ['owner_id'])],
   policies: [
@@ -135,7 +140,7 @@ describe('formatMigrationReport', () => {
     ).toBe(
       lines(
         'MATCH 4/4  20240101000000_create_todos.sql',
-        '  SUPERSEDED   line 10  table public.tmp_import: dropped or renamed by 20240301000000_cleanup.sql line 3',
+        '  SUPERSEDED   line 10  table public.tmp_import: dropped by 20240301000000_cleanup.sql line 3',
         '  UNVERIFIABLE line 20  GrantStmt: privileges are not checked',
         '  history: recorded in supabase_migrations.schema_migrations',
       ),
@@ -146,7 +151,7 @@ describe('formatMigrationReport', () => {
     expect(formatMigrationReport(report('20240101000000'), { verbose: true })).toBe(
       lines(
         'MATCH 4/4  20240101000000_create_todos.sql',
-        '  SUPERSEDED   line 10  table public.tmp_import: dropped or renamed by 20240301000000_cleanup.sql line 3',
+        '  SUPERSEDED   line 10  table public.tmp_import: dropped by 20240301000000_cleanup.sql line 3',
         '  UNVERIFIABLE line 20  GrantStmt: privileges are not checked',
         '  MATCH        line 1   table public.todos',
         '  MATCH        line 2   column public.todos.id',
@@ -160,15 +165,16 @@ describe('formatMigrationReport', () => {
 
   it('formats a fully matching, unrecorded migration in two lines', () => {
     expect(formatMigrationReport(report('20240301000000'))).toBe(
-      lines('MATCH 1/1  20240301000000_cleanup.sql', '  history: NOT recorded'),
+      lines('MATCH 2/2  20240301000000_cleanup.sql', '  history: NOT recorded'),
     );
   });
 
   it('says that a matching drop is gone, so verbose output cannot read as "it exists"', () => {
     expect(formatMigrationReport(report('20240301000000'), { verbose: true })).toBe(
       lines(
-        'MATCH 1/1  20240301000000_cleanup.sql',
+        'MATCH 2/2  20240301000000_cleanup.sql',
         '  MATCH line 3  table public.tmp_import: dropped or renamed here, and no longer exists',
+        '  MATCH line 5  column public.todos.done',
         '  history: NOT recorded',
       ),
     );
@@ -182,7 +188,7 @@ describe('formatMigrationReport', () => {
 
   it('says when history is unavailable', () => {
     expect(formatMigrationReport({ ...report('20240301000000'), recorded: null })).toBe(
-      lines('MATCH 1/1  20240301000000_cleanup.sql', '  history: unavailable'),
+      lines('MATCH 2/2  20240301000000_cleanup.sql', '  history: unavailable'),
     );
   });
 
@@ -206,6 +212,65 @@ describe('formatMigrationReport', () => {
   });
 });
 
+describe('formatMigrationReport: superseded objects', () => {
+  const DROP = '20240201000000_drop.sql';
+  const [created, extended] = verifyMigrations({
+    migrations: [
+      migration('20240101000000_events.sql', [
+        table('events', { line: 3 }),
+        column('events', 'id', { dataType: 'integer', line: 3 }),
+        column('events', 'kind', { dataType: 'text', line: 3 }),
+        constraint('events', null, { constraintType: 'primary_key', columns: ['id'], line: 3 }),
+        index('events', 'events_kind_idx', { columns: ['kind'], line: 9 }),
+        policy('events', 'read events', { line: 11 }),
+      ]),
+      migration('20240102000000_events_more.sql', [
+        column('events', 'payload', { dataType: 'jsonb', line: 1 }),
+        column('events', 'at', { dataType: 'timestamptz', line: 2 }),
+      ]),
+      migration(DROP, [table('events', { expect: 'absent', line: 4 })]),
+    ],
+    snapshot: snapshot(),
+    recordedVersions: null,
+  });
+
+  it('shows a dropped table once, counting what went with it', () => {
+    expect(formatMigrationReport(created!)).toBe(
+      lines(
+        'NOTHING TO VERIFY  20240101000000_events.sql',
+        `  SUPERSEDED line 3  table public.events (and 2 columns, 1 index, 1 constraint, 1 policy): dropped by ${DROP} line 4`,
+        '  history: unavailable',
+      ),
+    );
+  });
+
+  it('lists objects one by one when what superseded them is not in the report', () => {
+    expect(formatMigrationReport(extended!)).toBe(
+      lines(
+        'NOTHING TO VERIFY  20240102000000_events_more.sql',
+        `  SUPERSEDED line 1  column public.events.payload: table public.events dropped by ${DROP} line 4`,
+        `  SUPERSEDED line 2  column public.events.at: table public.events dropped by ${DROP} line 4`,
+        '  history: unavailable',
+      ),
+    );
+  });
+
+  it('lists every superseded object in verbose mode', () => {
+    expect(formatMigrationReport(created!, { verbose: true }).split('\n')).toHaveLength(8);
+  });
+
+  it('keeps the cause of each superseded check, for grouping by clients', () => {
+    expect(created?.checks.map((c) => (c.status === 'superseded' ? c.supersededBy : null))).toEqual(
+      Array(6).fill({
+        file: DROP,
+        line: 4,
+        reason: expect.stringContaining(`dropped by ${DROP} line 4`) as string,
+        byKey: 'relation:public.events',
+      }),
+    );
+  });
+});
+
 describe('formatSummary', () => {
   it('renders an aligned table and totals calling out unrecorded and recorded-but-broken migrations', () => {
     expect(formatSummary(reports)).toBe(
@@ -213,7 +278,7 @@ describe('formatSummary', () => {
         'VERSION         NAME              RESULT             MATCHED  SUPERSEDED  UNVERIFIABLE  HISTORY',
         '20240101000000  create_todos      MATCH              4/4      1           1             recorded',
         '20240102000000  add_todos_extras  MISMATCH           1/5      0           1             recorded',
-        '20240301000000  cleanup           MATCH              1/1      0           0             NOT RECORDED',
+        '20240301000000  cleanup           MATCH              2/2      0           0             NOT RECORDED',
         '20240302000000  seed              NOTHING TO VERIFY  -        0           0             NOT RECORDED',
         '',
         '4 migrations: 2 MATCH, 1 MISMATCH, 1 nothing to verify. 1 applied but NOT recorded in history.',
@@ -226,7 +291,7 @@ describe('formatSummary', () => {
     expect(formatSummary([{ ...report('20240301000000'), recorded: null }])).toBe(
       lines(
         'VERSION         NAME     RESULT  MATCHED  SUPERSEDED  UNVERIFIABLE  HISTORY',
-        '20240301000000  cleanup  MATCH   1/1      0           0             -',
+        '20240301000000  cleanup  MATCH   2/2      0           0             -',
         '',
         '1 migration: 1 MATCH, 0 MISMATCH, 0 nothing to verify. History unavailable.',
       ),
@@ -303,6 +368,20 @@ describe('describeExpected', () => {
         references: { schema: 'public', table: 'profiles', columns: ['id'] },
       }),
       'constraint todos_owner_fk on public.todos (foreign key (owner_id), references public.profiles (id))',
+    ],
+    [
+      constraint('todos', null, {
+        constraintType: 'foreign_key',
+        columns: ['owner_id'],
+        references: {
+          schema: 'public',
+          table: 'profiles',
+          columns: ['id'],
+          onDelete: 'set_null',
+          onUpdate: 'no_action',
+        },
+      }),
+      'foreign key on public.todos (owner_id) (references public.profiles (id), on delete set null)',
     ],
     [
       constraint('todos', null, { constraintType: 'check', columns: ['due_date'] }),

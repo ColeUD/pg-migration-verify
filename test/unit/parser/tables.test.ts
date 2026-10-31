@@ -96,6 +96,25 @@ describe('CREATE TABLE', () => {
     );
   });
 
+  it('records ON DELETE and ON UPDATE of foreign keys, NO ACTION when not written', () => {
+    const result = parse(`
+      create table c (
+        id int,
+        a int references p (id) on delete cascade on update set null,
+        b int references p (id) on delete restrict on update set default,
+        d int references p (id)
+      );`);
+    expect(objectAt(result, 'constraint:public.c.foreign_key(a)')).toMatchObject({
+      references: { onDelete: 'cascade', onUpdate: 'set_null' },
+    });
+    expect(objectAt(result, 'constraint:public.c.foreign_key(b)')).toMatchObject({
+      references: { onDelete: 'restrict', onUpdate: 'set_default' },
+    });
+    expect(objectAt(result, 'constraint:public.c.foreign_key(d)')).toMatchObject({
+      references: { onDelete: 'no_action', onUpdate: 'no_action' },
+    });
+  });
+
   it('lists the columns a check constraint references, sorted', () => {
     expect(objectAt(parse(sql), 'constraint:app.todos.todos_dates_check')).toMatchObject({
       name: 'todos_dates_check',
@@ -167,12 +186,13 @@ describe('CREATE TABLE', () => {
     expect(keys(parse(statement))).toEqual([tableKey, columnKey]);
   });
 
-  it('treats IF NOT EXISTS like a plain CREATE', () => {
-    const plain = parse('create table t (id int not null)').objects.map(attributes);
-    const ifNotExists = parse('create table if not exists t (id int not null)').objects.map(
-      attributes,
+  it('marks what CREATE TABLE IF NOT EXISTS declares as conditional on the table', () => {
+    const plain = parse('create table t (id int not null unique)').objects.map(attributes);
+    const ifNotExists = parse('create table if not exists t (id int not null unique)');
+    expect(ifNotExists.objects.map(attributes)).toEqual(
+      plain.map((o) => ({ ...o, conditional: 'relation:public.t' })),
     );
-    expect(ifNotExists).toEqual(plain);
+    expect(plain.some((o) => 'conditional' in o)).toBe(false);
   });
 
   it('checks unlogged tables like any other table', () => {
@@ -264,11 +284,6 @@ describe('ALTER TABLE', () => {
       { name: 'notes', expect: 'present', dataType: 'text', notNull: false },
     ],
     [
-      'add column if not exists',
-      "alter table todos add column if not exists notes text not null default ''",
-      { name: 'notes', expect: 'present', dataType: 'text', notNull: true },
-    ],
-    [
       'drop column',
       'alter table todos drop column if exists legacy',
       { name: 'legacy', expect: 'absent', dataType: null, notNull: null },
@@ -299,6 +314,44 @@ describe('ALTER TABLE', () => {
       { kind: 'column', schema: 'public', table: 'todos', ...column },
     ]);
     expect(result.notes).toEqual([]);
+  });
+
+  it('marks ADD COLUMN IF NOT EXISTS and its inline constraints as conditional on the column', () => {
+    const result = parse(`alter table todos add column if not exists slug text not null unique`);
+    expect(result.objects.map(attributes)).toEqual([
+      {
+        kind: 'column',
+        expect: 'present',
+        schema: 'public',
+        table: 'todos',
+        name: 'slug',
+        dataType: 'text',
+        notNull: true,
+        conditional: 'column:public.todos.slug',
+      },
+      {
+        kind: 'constraint',
+        expect: 'present',
+        schema: 'public',
+        table: 'todos',
+        name: null,
+        constraintType: 'unique',
+        columns: ['slug'],
+        references: null,
+        impliedName: 'todos_slug_key',
+        conditional: 'column:public.todos.slug',
+      },
+    ]);
+    expect(parse('alter table todos add column slug text').objects[0]).not.toHaveProperty(
+      'conditional',
+    );
+  });
+
+  it.each([
+    ['create index if not exists todos_slug_idx on todos (slug)', 'relation:public.todos_slug_idx'],
+    ['create sequence if not exists todo_no', 'relation:public.todo_no'],
+  ])('marks %s as conditional on itself', (sql, key) => {
+    expect(parse(sql).objects).toMatchObject([{ key, conditional: key }]);
   });
 
   it('adds a column together with its inline constraints', () => {
@@ -360,6 +413,7 @@ describe('ALTER TABLE', () => {
         constraintType: 'primary_key',
         columns: ['id'],
         references: null,
+        impliedName: 'todos_pkey',
       },
     ]);
   });

@@ -33,8 +33,9 @@ const dir = z
   .string()
   .optional()
   .describe(
-    'Migrations directory. Relative paths are resolved against the project directory. ' +
-      'Omit to use the configured directory (PGMV_MIGRATIONS_DIR, default supabase/migrations).',
+    'Migrations directory. Relative paths are resolved against the project directory. It must be ' +
+      'inside the project directory or the configured migrations directory. Omit to use the ' +
+      'configured directory (PGMV_MIGRATIONS_DIR, default supabase/migrations).',
   );
 
 const file = z
@@ -142,9 +143,22 @@ const checkEntry = z.object({
     .describe('For status different: each attribute that differs'),
   notes: z.array(z.string()).describe('E.g. attributes whose expected value a later file changed'),
   supersededBy: z
-    .object({ file: z.string(), reason: z.string() })
+    .object({
+      file: z.string(),
+      line,
+      reason: z.string(),
+      byKey: z
+        .string()
+        .describe(
+          'Key of the dropped or rebuilt object responsible (this one, or its table, schema, ' +
+            'type or function); checks with the same file and byKey share one cause',
+        ),
+    })
     .nullable()
-    .describe('For status superseded: the later migration that drops or renames the object'),
+    .describe(
+      'For status superseded: the migration that drops, renames or rebuilds the object (for a ' +
+        'statement IF NOT EXISTS skipped, the earlier one that created it)',
+    ),
 });
 
 const migrationEntry = z.object({
@@ -154,6 +168,13 @@ const migrationEntry = z.object({
   verdict: enumOf<MigrationVerdict>({ MATCH: true, MISMATCH: true, NOTHING_TO_VERIFY: true }),
   matched: z.number().int(),
   checked: z.number().int().describe('Objects checked; superseded objects are not counted'),
+  evidence: z
+    .number()
+    .int()
+    .describe(
+      'Matched checks that would fail had the file never run. 0 with verdict MATCH (only drops, ' +
+        're-created policies, replaced functions ...) means the MATCH does not show it was applied',
+    ),
   superseded: z.number().int(),
   unverifiable: z.number().int().describe('Statements that cannot be checked against the catalog'),
   recorded: z
@@ -255,7 +276,17 @@ export const verifyAllOutput = z.object({
     appliedNotRecorded: z
       .number()
       .int()
-      .describe('MATCH, but the history table does not record the version (applied by hand)'),
+      .describe(
+        'MATCH with evidence (a check that would fail had the file never run), but the history ' +
+          'table does not record the version: applied by hand',
+      ),
+    unprovenNotRecorded: z
+      .number()
+      .int()
+      .describe(
+        'MATCH and not recorded, but no check would fail had the file never run (drops, ' +
+          're-created policies, replaced functions): whether it was applied is unknown',
+      ),
     recordedButMismatch: z
       .number()
       .int()

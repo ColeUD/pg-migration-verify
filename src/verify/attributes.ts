@@ -1,4 +1,4 @@
-import type { ConstraintType, RelationKind, TriggerEvent } from '../model.js';
+import type { ConstraintType, FkAction, RelationKind, TriggerEvent } from '../model.js';
 import { qualifiedName, quoteKeyColumn } from '../sql-ident.js';
 
 /**
@@ -47,6 +47,11 @@ export function columnListText(columns: readonly string[]): string {
 
 export function constraintTypeText(type: ConstraintType): string {
   return type.replace('_', ' ');
+}
+
+/** `cascade`, `set null`, `no action`. */
+export function fkActionText(action: FkAction): string {
+  return action.replace('_', ' ');
 }
 
 export function relationKindText(kind: RelationKind | 'materialized_view'): string {

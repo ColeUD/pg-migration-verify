@@ -12,11 +12,13 @@ import type {
   Expectation,
   ExpectedObject,
   ExtensionObject,
+  FkAction,
   FunctionObject,
   IndexObject,
   Note,
   PolicyObject,
   RelationObject,
+  Rename,
   RlsObject,
   SchemaObject,
   SourceRef,
@@ -109,10 +111,16 @@ export function index(
   };
 }
 
+/** Foreign-key target; the referential actions default to "not asserted". */
+type ReferencesInput = Omit<NonNullable<ConstraintObject['references']>, 'onDelete' | 'onUpdate'> &
+  Partial<Pick<NonNullable<ConstraintObject['references']>, 'onDelete' | 'onUpdate'>>;
+
 export function constraint(
   tableName: string,
   name: string | null,
-  attrs: Partial<Pick<ConstraintObject, 'constraintType' | 'columns' | 'references'>> & Common = {},
+  attrs: Partial<Pick<ConstraintObject, 'constraintType' | 'columns'>> & {
+    references?: ReferencesInput | null;
+  } & Common = {},
 ): ConstraintObject {
   const b = base(attrs);
   const constraintType = attrs.constraintType ?? null;
@@ -124,7 +132,8 @@ export function constraint(
     name,
     constraintType,
     columns,
-    references: attrs.references ?? null,
+    references:
+      attrs.references == null ? null : { onDelete: null, onUpdate: null, ...attrs.references },
     key: objectKey({
       kind: 'constraint',
       schema: b.schema,
@@ -254,6 +263,7 @@ export function migration(
   fileName: string,
   objects: ExpectedObject[],
   notes: Note[] = [],
+  renames: Rename[] = [],
 ): MigrationInput {
   const match = /^(\d+)_?(.*)\.sql$/.exec(fileName);
   if (match === null) throw new Error(`bad migration file name ${fileName}`);
@@ -272,6 +282,7 @@ export function migration(
     parsed: {
       file: fileName,
       objects: objects.map(withFile),
+      renames: renames.map((r) => ({ ...r, from: withFile(r.from), to: withFile(r.to) })),
       notes: notes.map(withFile),
       statementCount: objects.length + notes.length,
     },
@@ -335,9 +346,28 @@ export const cat = {
     name: string,
     type: Rows<'constraints'>['type'],
     columns: string[],
-    attrs: Partial<Rows<'constraints'>> = {},
+    attrs: Partial<Omit<Rows<'constraints'>, 'references'>> & {
+      references?: {
+        schema: string;
+        table: string;
+        columns: string[];
+        onDelete?: FkAction;
+        onUpdate?: FkAction;
+      } | null;
+    } = {},
   ): Rows<'constraints'> {
-    return { schema: 'public', table: tableName, name, type, columns, references: null, ...attrs };
+    const { references, ...rest } = attrs;
+    return {
+      schema: 'public',
+      table: tableName,
+      name,
+      type,
+      columns,
+      ...rest,
+      // Postgres' default action is NO ACTION.
+      references:
+        references == null ? null : { onDelete: 'no_action', onUpdate: 'no_action', ...references },
+    };
   },
   fn(name: string, argTypes: string[], attrs: Partial<Rows<'functions'>> = {}): Rows<'functions'> {
     return { schema: 'public', name, argTypes, isProcedure: false, ...attrs };

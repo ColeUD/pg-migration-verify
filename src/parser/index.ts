@@ -80,7 +80,7 @@ export function parseMigration(sql: string, options: ParseOptions): ParsedMigrat
           net.add(effect.object, effect.cascade);
           break;
         case 'rename':
-          if (!net.rename(effect.from, effect.to)) {
+          if (!net.rename(effect.from, effect.to, schema)) {
             notes.push({
               category: 'unverifiable',
               statementType: effect.statementType,
@@ -99,5 +99,11 @@ export function parseMigration(sql: string, options: ParseOptions): ParsedMigrat
     }
   });
 
-  return { file: options.file, objects: net.objects, notes, statementCount: statements.length };
+  return {
+    file: options.file,
+    objects: net.objects,
+    renames: net.renames,
+    notes,
+    statementCount: statements.length,
+  };
 }

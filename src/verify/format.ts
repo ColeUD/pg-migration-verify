@@ -31,29 +31,45 @@ export interface ReportFormatOptions {
  * MISMATCH 2/4  20240102000000_add_todos.sql
  *   MISSING      line 7   column public.todos.due_date (date, nullable)
  *   DIFFERENT    line 12  index public.todos_owner_idx: unique expected true, found false
- *   SUPERSEDED   line 3   table public.tmp_import: dropped or renamed by 20240301000000_x.sql line 3
+ *   SUPERSEDED   line 3   table public.tmp_import (and 2 columns): dropped by 20240301000000_x.sql line 3
  *   UNVERIFIABLE line 25  GrantStmt: privileges are not checked
  *   history: NOT recorded
  * ```
  *
  * Problems come first (missing, different, unexpected), then what could not be checked; within a
- * group lines follow the file. Line numbers refer to this migration's file.
+ * group lines follow the file. Line numbers refer to this migration's file. Objects superseded
+ * along with their table (or type, or schema) share its line, unless `verbose`.
  */
 export function formatMigrationReport(
   report: MigrationReport,
   options: ReportFormatOptions = {},
 ): string {
   const verbose = options.verbose ?? false;
+  const shown = report.checks.filter((c) => verbose || c.status !== 'match');
   const rows: Row[] = [
-    ...report.checks.filter((c) => verbose || c.status !== 'match').map((c) => checkRow(c)),
+    ...(verbose ? shown.map((c) => checkRow(c)) : groupSuperseded(shown)),
     ...report.notes.filter((n) => verbose || n.category !== 'ignored').map((n) => noteRow(n)),
   ];
   rows.sort((a, b) => a.rank - b.rank || a.line - b.line);
   return [
     `${verdictHeader(report)}  ${report.file}`,
     ...renderRows(rows, columnWidths(rows)),
+    ...(lacksEvidence(report) ? [`  evidence: ${NO_EVIDENCE}`] : []),
     `  history: ${historyText(report.recorded, options.historyTable)}`,
   ].join('\n');
+}
+
+const NO_EVIDENCE =
+  'none, every check would also hold had this file never run, so this MATCH does not show ' +
+  'that it was applied';
+
+/**
+ * A MATCH that does not show the file ran, where that matters: the history does not confirm it.
+ * Drops, policies re-created with the same command and roles, CREATE OR REPLACE FUNCTION and
+ * columns added back as an earlier migration defined them all hold before the file runs.
+ */
+function lacksEvidence(report: MigrationReport): boolean {
+  return report.verdict === 'MATCH' && report.evidence === 0 && report.recorded !== true;
 }
 
 /**
@@ -68,7 +84,7 @@ export function formatSummary(reports: readonly MigrationReport[]): string {
   const body = reports.map((r) => [
     r.version,
     r.name,
-    VERDICT_TEXT[r.verdict],
+    lacksEvidence(r) ? `${VERDICT_TEXT[r.verdict]}*` : VERDICT_TEXT[r.verdict],
     r.verdict === 'NOTHING_TO_VERIFY' ? '-' : `${r.matched}/${r.checked}`,
     String(r.checks.filter((c) => c.status === 'superseded').length),
     String(r.notes.filter((n) => n.category === 'unverifiable').length),
@@ -172,6 +188,67 @@ function checkRow(c: ObjectCheck): Row {
   return row(c.status.toUpperCase(), CHECK_RANK[c.status], c.object.source, checkText(c), c.notes);
 }
 
+/**
+ * Rows for checks, where a superseded object whose cause is in this report (a dropped table)
+ * stands for every object superseded with it (its columns, constraints and indexes), which would
+ * otherwise repeat the same reason line after line.
+ */
+function groupSuperseded(checks: readonly ObjectCheck[]): Row[] {
+  const groupOf = (c: ObjectCheck & { status: 'superseded' }): string =>
+    `${c.supersededBy.file}|${c.supersededBy.byKey}`;
+  const groups = new Map<string, ObjectCheck[]>();
+  for (const c of checks) {
+    if (c.status === 'superseded') groups.set(groupOf(c), [...(groups.get(groupOf(c)) ?? []), c]);
+  }
+  const rows: Row[] = [];
+  for (const c of checks) {
+    if (c.status !== 'superseded') {
+      rows.push(checkRow(c));
+      continue;
+    }
+    const group = groups.get(groupOf(c)) ?? [];
+    const cause = group.find((g) => g.object.key === c.supersededBy.byKey);
+    if (cause === undefined) {
+      rows.push(checkRow(c));
+    } else if (cause === c) {
+      const others = group.filter((g) => g !== c).map((g) => g.object.kind);
+      const text = `${describeObject(c.object)}${othersText(others)}: ${c.supersededBy.reason}`;
+      rows.push(row('SUPERSEDED', CHECK_RANK.superseded, c.object.source, text, c.notes));
+    }
+  }
+  return rows;
+}
+
+/** ` (and 5 columns, 1 constraint, 1 index)`, kinds in listing order. */
+function othersText(kinds: readonly ObjectKind[]): string {
+  if (kinds.length === 0) return '';
+  const parts = (Object.keys(KIND_TITLES) as ObjectKind[]).flatMap((kind) => {
+    const count = kinds.filter((k) => k === kind).length;
+    const [singular, pluralNoun] = KIND_NOUNS[kind];
+    return count === 0 ? [] : [`${count} ${count === 1 ? singular : pluralNoun}`];
+  });
+  return ` (and ${parts.join(', ')})`;
+}
+
+/** Singular and plural nouns for counting objects of a kind. */
+const KIND_NOUNS: Record<ObjectKind, readonly [string, string]> = {
+  schema: ['schema', 'schemas'],
+  extension: ['extension', 'extensions'],
+  type: ['type', 'types'],
+  enum_value: ['enum value', 'enum values'],
+  table: ['table', 'tables'],
+  view: ['view', 'views'],
+  materialized_view: ['materialized view', 'materialized views'],
+  sequence: ['sequence', 'sequences'],
+  column: ['column', 'columns'],
+  index: ['index', 'indexes'],
+  constraint: ['constraint', 'constraints'],
+  function: ['function', 'functions'],
+  trigger: ['trigger', 'triggers'],
+  rls: ['row level security setting', 'row level security settings'],
+  policy: ['policy', 'policies'],
+};
+
 function checkText(c: ObjectCheck): string {
   const o = c.object;
   switch (c.status) {
@@ -189,7 +266,7 @@ function checkText(c: ObjectCheck): string {
     case 'unexpected':
       return `${describeObject(o)}: dropped or renamed here, but still exists`;
     case 'superseded':
-      return `${describeObject(o)}: ${c.supersededBy?.reason ?? 'changed by a later migration'}`;
+      return `${describeObject(o)}: ${c.supersededBy.reason}`;
   }
 }
 
@@ -250,16 +327,32 @@ function totals(reports: readonly MigrationReport[]): string[] {
   let line =
     `${plural(reports.length, 'migration')}: ${by('MATCH')} MATCH, ${by('MISMATCH')} MISMATCH, ` +
     `${by('NOTHING_TO_VERIFY')} nothing to verify.`;
-  const unrecorded = reports.filter((r) => r.verdict === 'MATCH' && r.recorded === false).length;
-  if (unrecorded > 0) line += ` ${unrecorded} applied but NOT recorded in history.`;
+  const unrecorded = reports.filter((r) => r.verdict === 'MATCH' && r.recorded === false);
+  // Only a MATCH with evidence shows that a file ran; the others are listed apart.
+  const applied = unrecorded.filter((r) => r.evidence > 0).length;
+  if (applied > 0) line += ` ${applied} applied but NOT recorded in history.`;
   if (reports.every((r) => r.recorded === null)) line += ' History unavailable.';
 
+  const lines = [line];
+  const unproven = unrecorded.filter((r) => r.evidence === 0);
+  if (unproven.length > 0) {
+    lines.push(
+      `${unproven.length} NOT recorded, and their MATCH does not show they ran: ` +
+        unproven.map((r) => r.file).join(', '),
+    );
+  }
   const recordedMismatch = reports.filter((r) => r.verdict === 'MISMATCH' && r.recorded === true);
-  return recordedMismatch.length === 0
-    ? [line]
-    : [
-        line,
-        `${recordedMismatch.length} recorded in history but MISMATCH: ` +
-          recordedMismatch.map((r) => r.file).join(', '),
-      ];
+  if (recordedMismatch.length > 0) {
+    lines.push(
+      `${recordedMismatch.length} recorded in history but MISMATCH: ` +
+        recordedMismatch.map((r) => r.file).join(', '),
+    );
+  }
+  if (reports.some(lacksEvidence)) {
+    lines.push(
+      'MATCH*: every check would also hold had the file never run, so it may not have been ' +
+        'applied.',
+    );
+  }
+  return lines;
 }

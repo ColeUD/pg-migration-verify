@@ -51,7 +51,12 @@ function totals(reports: readonly MigrationReport[]): VerifyAllOutput['totals'] 
     match: count((r) => r.verdict === 'MATCH'),
     mismatch: count((r) => r.verdict === 'MISMATCH'),
     nothingToVerify: count((r) => r.verdict === 'NOTHING_TO_VERIFY'),
-    appliedNotRecorded: count((r) => r.verdict === 'MATCH' && r.recorded === false),
+    appliedNotRecorded: count(
+      (r) => r.verdict === 'MATCH' && r.recorded === false && r.evidence > 0,
+    ),
+    unprovenNotRecorded: count(
+      (r) => r.verdict === 'MATCH' && r.recorded === false && r.evidence === 0,
+    ),
     recordedButMismatch: count((r) => r.verdict === 'MISMATCH' && r.recorded === true),
   };
 }

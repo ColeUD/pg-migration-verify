@@ -155,6 +155,9 @@ export interface ConstraintRow {
   ref_schema: string | null;
   ref_table: string | null;
   ref_columns: string[];
+  /** `confdeltype` / `confupdtype`: a, r, c, n, d for foreign keys, a blank otherwise. */
+  del_action: string;
+  upd_action: string;
 }
 
 /**
@@ -178,7 +181,8 @@ export const CONSTRAINTS = defineCatalogQuery<ConstraintRow>(
             FROM unnest(con.confkey) WITH ORDINALITY AS k (attnum, ord)
             JOIN pg_attribute a ON a.attrelid = con.confrelid AND a.attnum = k.attnum
             ORDER BY k.ord
-          ) AS ref_columns
+          ) AS ref_columns,
+          con.confdeltype::text AS del_action, con.confupdtype::text AS upd_action
    FROM pg_constraint con
    JOIN pg_class t ON t.oid = con.conrelid
    JOIN pg_namespace n ON n.oid = t.relnamespace

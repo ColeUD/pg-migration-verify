@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { resolveDirectory, type Config } from '../config.js';
 import {
+  isOversized,
   listMigrationFiles,
   readMigrationSql,
   type MigrationListing,
@@ -8,6 +9,7 @@ import {
 import type { MigrationFile } from '../model.js';
 import { loadParser, parseMigration } from '../parser/index.js';
 import { plural } from '../text.js';
+import { mixedVersionLengthWarning } from '../versions.js';
 import type { MigrationInput } from '../verify/index.js';
 import type { ToolContext } from './context.js';
 
@@ -28,7 +30,7 @@ export async function loadRepoMigrations(
   context: ToolContext,
   dir: string | undefined,
 ): Promise<RepoMigrations> {
-  const absolute = resolveDirectory(context.config, dir);
+  const absolute = await resolveDirectory(context.config, dir);
   return {
     display: displayDirectory(context.config, absolute),
     listing: await listMigrationFiles(absolute),
@@ -64,10 +66,18 @@ export async function parseMigrations(
  */
 export function listingWarnings(listing: MigrationListing): string[] {
   const warnings: string[] = [];
-  if (listing.skipped.length > 0) {
+  const misnamed = listing.skipped.filter((s) => !isOversized(s));
+  const unread = listing.skipped.filter(isOversized);
+  if (misnamed.length > 0) {
     warnings.push(
-      `Skipped ${plural(listing.skipped.length, '.sql file')} not named <version>_<name>.sql ` +
-        `(never applied by the Supabase CLI): ${listing.skipped.map((s) => s.fileName).join(', ')}`,
+      `Skipped ${plural(misnamed.length, '.sql file')} not named <version>_<name>.sql ` +
+        `(never applied by the Supabase CLI): ${misnamed.map((s) => s.fileName).join(', ')}`,
+    );
+  }
+  if (unread.length > 0) {
+    warnings.push(
+      `Not verified, ${plural(unread.length, 'file')} ${unread[0]?.reason ?? ''}: ` +
+        unread.map((s) => s.fileName).join(', '),
     );
   }
   if (listing.duplicateVersions.length > 0) {
@@ -75,6 +85,8 @@ export function listingWarnings(listing: MigrationListing): string[] {
       `Duplicate versions (the Supabase CLI refuses them): ${listing.duplicateVersions.join(', ')}`,
     );
   }
+  const mixed = mixedVersionLengthWarning(listing.files);
+  if (mixed !== null) warnings.push(mixed);
   return warnings;
 }
 

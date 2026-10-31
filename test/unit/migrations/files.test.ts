@@ -4,9 +4,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  MAX_MIGRATION_FILE_BYTES,
   listMigrationFiles,
   readMigrationSql,
   resolveMigration,
+  tooLargeReason,
 } from '../../../src/migrations/files.js';
 import type { MigrationFile } from '../../../src/model.js';
 
@@ -38,6 +40,23 @@ function fakeFile(fileName: string): MigrationFile {
 }
 
 describe('listMigrationFiles', () => {
+  it('skips a file over the size limit without reading it', async () => {
+    await writeFiles({
+      '20240101000000_init.sql': 'create table a (id int);',
+      '2024_customer_dump.sql': `insert into users values ('${'x'.repeat(200)}');`,
+    });
+
+    const listing = await listMigrationFiles(dir, { maxFileBytes: 100 });
+
+    expect(listing.files.map((f) => f.fileName)).toEqual(['20240101000000_init.sql']);
+    expect(listing.skipped).toEqual([
+      { fileName: '2024_customer_dump.sql', reason: tooLargeReason(100) },
+    ]);
+    expect(tooLargeReason(100)).toMatch(/^larger than 100 bytes, not read/);
+    expect(tooLargeReason()).toMatch(/^larger than 10 MB, not read/);
+    expect(MAX_MIGRATION_FILE_BYTES).toBe(10 * 1024 * 1024);
+  });
+
   it('lists *.sql migrations sorted by version, with absolute paths and parsed names', async () => {
     await writeFiles({
       '20240102000000_create_todos.sql': 'create table todos (id int);',
@@ -60,7 +79,7 @@ describe('listMigrationFiles', () => {
     expect(listing.duplicateVersions).toEqual([]);
   });
 
-  it('sorts versions of different digit lengths numerically, not as text', async () => {
+  it('sorts by file name, as the Supabase CLI applies them, not numerically', async () => {
     await writeFiles({
       '10_ten.sql': '',
       '9_nine.sql': '',
@@ -70,7 +89,7 @@ describe('listMigrationFiles', () => {
 
     const listing = await listMigrationFiles(dir);
 
-    expect(listing.files.map((f) => f.version)).toEqual(['2', '9', '10', '100']);
+    expect(listing.files.map((f) => f.version)).toEqual(['100', '10', '2', '9']);
   });
 
   it('ignores non-sql files and subdirectories, and does not recurse', async () => {

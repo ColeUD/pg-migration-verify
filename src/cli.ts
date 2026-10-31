@@ -46,6 +46,7 @@ Environment:
   PGMV_MIGRATIONS_DIR        migrations directory, relative to the project (default: supabase/migrations)
   PGMV_DEFAULT_SCHEMA        schema for unqualified names (default: public)
   PGMV_STATEMENT_TIMEOUT_MS  per-query timeout in milliseconds (default: 15000)
+  PGMV_ALLOW_OUTSIDE_PROJECT 1 = the dir tool argument may point outside the project
 
 Tools: list_repo_migrations, list_recorded_migrations, diff_history, expected_objects,
 verify_migration, verify_all.

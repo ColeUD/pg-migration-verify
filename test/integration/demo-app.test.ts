@@ -212,8 +212,10 @@ describe('scenario 1: history out of sync and objects changed by hand', () => {
     // Row by row:
     // - create_organizations: 23 objects (enum + 3 values from the DO block, 2 tables, 9 columns,
     //   6 constraints, function, trigger), all there; recorded.
-    // - create_profiles_and_memberships: 21 objects; display_name is renamed by rework_..., so
-    //   20 are checked. Recorded (under its old name: history is matched by version).
+    // - create_profiles_and_memberships: 21 objects; the profiles SELECT policy is dropped and
+    //   re-created by rework_... (and checked there), so 20 are checked. display_name, which
+    //   rework_... renames, is checked as full_name with its type. Recorded (under its old name:
+    //   history is matched by version).
     // - create_projects: 18 objects, all there, never recorded (pasted into the SQL editor).
     // - create_tasks: 24 objects; tasks_assignee_idx is dropped by rework_..., so 23 are checked
     //   and 2 were removed by hand (due_on, tasks_project_status_idx).
@@ -246,21 +248,14 @@ describe('scenario 1: history out of sync and objects changed by hand', () => {
         'MISMATCH 21/23  20240305120000_create_tasks.sql',
         '  MISSING    line 5   column public.tasks.due_on (date, nullable)',
         '  MISSING    line 18  index public.tasks_project_status_idx (on public.tasks (project_id, status), using btree)',
-        '  SUPERSEDED line 19  index public.tasks_assignee_idx: dropped or renamed by 20240320090000_rework_profiles_and_tasks.sql line 12',
+        '  SUPERSEDED line 19  index public.tasks_assignee_idx: dropped by 20240320090000_rework_profiles_and_tasks.sql line 12',
         `  history: recorded in ${HISTORY_TABLE}`,
         '',
         'MISMATCH 12/14  20240310083000_create_comments.sql',
         '  MISSING      line 26  policy "Authors write comments" on public.comments (for INSERT, to authenticated)',
         '  DIFFERENT    line 3   column public.comments.body: nullability expected not null, found nullable',
-        '  SUPERSEDED   line 34  table public.task_events: dropped or renamed by 20240320090000_rework_profiles_and_tasks.sql line 16',
-        '  SUPERSEDED   line 34  column public.task_events.id: table public.task_events dropped or renamed by 20240320090000_rework_profiles_and_tasks.sql line 16',
-        '  SUPERSEDED   line 34  primary key on public.task_events (id): table public.task_events dropped or renamed by 20240320090000_rework_profiles_and_tasks.sql line 16',
-        '  SUPERSEDED   line 34  column public.task_events.task_id: table public.task_events dropped or renamed by 20240320090000_rework_profiles_and_tasks.sql line 16',
-        '  SUPERSEDED   line 34  foreign key on public.task_events (task_id): table public.task_events dropped or renamed by 20240320090000_rework_profiles_and_tasks.sql line 16',
-        '  SUPERSEDED   line 34  column public.task_events.kind: table public.task_events dropped or renamed by 20240320090000_rework_profiles_and_tasks.sql line 16',
-        '  SUPERSEDED   line 34  column public.task_events.payload: table public.task_events dropped or renamed by 20240320090000_rework_profiles_and_tasks.sql line 16',
-        '  SUPERSEDED   line 34  column public.task_events.created_at: table public.task_events dropped or renamed by 20240320090000_rework_profiles_and_tasks.sql line 16',
-        '  SUPERSEDED   line 42  index public.task_events_task_id_idx: table public.task_events dropped or renamed by 20240320090000_rework_profiles_and_tasks.sql line 16',
+        // Everything that went with the dropped table shares its line.
+        '  SUPERSEDED   line 34  table public.task_events (and 5 columns, 1 index, 2 constraints): dropped by 20240320090000_rework_profiles_and_tasks.sql line 16',
         '  UNVERIFIABLE line 30  GrantStmt: privileges are not checked',
         '  UNVERIFIABLE line 32  CommentStmt: comments are not checked',
         `  history: NOT recorded in ${HISTORY_TABLE}`,
@@ -282,6 +277,7 @@ describe('scenario 1: history out of sync and objects changed by hand', () => {
       mismatch: 3,
       nothingToVerify: 1,
       appliedNotRecorded: 2,
+      unprovenNotRecorded: 0,
       recordedButMismatch: 2,
     });
     expect(verdicts(structured)).toEqual([
@@ -352,7 +348,7 @@ describe('scenario 1: history out of sync and objects changed by hand', () => {
         'MISMATCH 21/23  20240305120000_create_tasks.sql',
         '  MISSING    line 5   column public.tasks.due_on (date, nullable)',
         '  MISSING    line 18  index public.tasks_project_status_idx (on public.tasks (project_id, status), using btree)',
-        '  SUPERSEDED line 19  index public.tasks_assignee_idx: dropped or renamed by 20240320090000_rework_profiles_and_tasks.sql line 12',
+        '  SUPERSEDED line 19  index public.tasks_assignee_idx: dropped by 20240320090000_rework_profiles_and_tasks.sql line 12',
         '  MATCH      line 3   enum type public.task_status',
         "  MATCH      line 3   enum value public.task_status.'todo'",
         "  MATCH      line 3   enum value public.task_status.'in_progress'",
@@ -622,6 +618,7 @@ describe('scenario 2: everything applied and recorded', () => {
       mismatch: 0,
       nothingToVerify: 1,
       appliedNotRecorded: 0,
+      unprovenNotRecorded: 0,
       recordedButMismatch: 0,
     });
     expect(structured.migrations.every((m) => m.problems.length === 0 && m.recorded)).toBe(true);

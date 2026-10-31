@@ -50,8 +50,11 @@ const LEGEND =
   'Meaning of the output: MATCH = every object the migration should leave behind exists as ' +
   'written. MISMATCH = at least one object is MISSING (not found), DIFFERENT (found with other ' +
   'attributes, e.g. type or nullability) or UNEXPECTED (dropped or renamed by the migration but ' +
-  'still there). NOTHING TO VERIFY = no statement yields a catalog check. SUPERSEDED = a later ' +
-  'migration drops or renames the object, so it is checked there instead; not a problem. ' +
+  'still there). MATCH* = a MATCH that does not show the file ran (every check would also hold ' +
+  'without it), so "NOT recorded" there does not mean applied by hand. NOTHING TO VERIFY = no ' +
+  'statement yields a catalog check. SUPERSEDED = a later migration drops or rebuilds the object ' +
+  'or what it depends on (or IF NOT EXISTS skipped the statement), so it cannot be checked ' +
+  'against this file; objects renamed later are checked under their new name. ' +
   'UNVERIFIABLE = a statement that cannot be checked against the catalog (DO blocks, GRANTs, ' +
   'data changes); review it by hand.';
 
@@ -76,7 +79,7 @@ export function createServer(context: ToolContext): McpServer {
       title: 'List repository migrations',
       description:
         'List the migration files in the repository (Supabase layout <version>_<name>.sql), ' +
-        'sorted by version, with the sha256 of each file. Also reports .sql files the Supabase ' +
+        'in apply order (by file name, as the Supabase CLI applies them), with the sha256 of each file. Also reports .sql files the Supabase ' +
         'CLI would skip because of their name and versions used by more than one file. Use it to ' +
         'see which migrations exist or to find the exact file name for the other tools. Needs no ' +
         `database. ${READ_ONLY_TEXT}`,

@@ -16,6 +16,7 @@ import { quoteIdent } from '../sql-ident.js';
 import {
   ATTRIBUTE_LABELS,
   columnListText,
+  fkActionText,
   constraintTypeText,
   eventsText,
   functionRefText,
@@ -227,6 +228,8 @@ function constraintShapeDifferences(o: ConstraintObject, found: CatalogConstrain
         found.references === null ? 'none' : referencesText(found.references),
       ),
     );
+  } else if (o.references !== null) {
+    differences.push(...actionDifferences(o.references, found.references));
   }
   return differences;
 }
@@ -245,6 +248,26 @@ function constraintColumnsMatch(
     return new Set(expected).size === set.size && expected.every((c) => set.has(c));
   }
   return sameList(expected, actual);
+}
+
+/** ON DELETE / ON UPDATE of a foreign key, where the expectation asserts them. */
+function actionDifferences(
+  expected: NonNullable<ConstraintObject['references']>,
+  actual: CatalogConstraint['references'],
+): Difference[] {
+  if (actual === null) return [];
+  const differences: Difference[] = [];
+  if (expected.onDelete !== null && expected.onDelete !== actual.onDelete) {
+    differences.push(
+      diff('on delete', fkActionText(expected.onDelete), fkActionText(actual.onDelete)),
+    );
+  }
+  if (expected.onUpdate !== null && expected.onUpdate !== actual.onUpdate) {
+    differences.push(
+      diff('on update', fkActionText(expected.onUpdate), fkActionText(actual.onUpdate)),
+    );
+  }
+  return differences;
 }
 
 function referencesMatch(

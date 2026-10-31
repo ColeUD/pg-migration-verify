@@ -15,9 +15,16 @@ import type {
   ViewStmt,
 } from 'libpg-query';
 import type { RlsObject } from '../../model.js';
-import { keyed, noteEffect, objectEffect, type Effect, type HandlerContext } from '../effects.js';
+import {
+  keyed,
+  noteEffect,
+  objectEffect,
+  renameEffect,
+  type Effect,
+  type HandlerContext,
+} from '../effects.js';
 import { relationName, type QualifiedName } from '../names.js';
-import { columnObject, constraintStub, relationObject } from '../objects.js';
+import { columnObject, constraintStub, indexStub, relationObject } from '../objects.js';
 import { isSerialType, normalizeTypeName } from '../types.js';
 import { constraintKind, constraintObject, notNullColumns } from './constraints.js';
 
@@ -28,7 +35,8 @@ export function handleCreateStmt(node: CreateStmt, ctx: HandlerContext): Effect[
     return [noteEffect(ctx, 'ignored', 'temporary table: it does not outlive the session')];
   }
   const table = relationName(node.relation, ctx.schema);
-  const effects: Effect[] = [objectEffect(relationObject('table', table, 'present', ctx.source))];
+  const tableObject = relationObject('table', table, 'present', ctx.source);
+  const effects: Effect[] = [objectEffect(tableObject)];
 
   const elements = node.tableElts ?? [];
   // Columns listed in a table-level PRIMARY KEY become NOT NULL.
@@ -85,7 +93,8 @@ export function handleCreateStmt(node: CreateStmt, ctx: HandlerContext): Effect[
       ),
     );
   }
-  return effects;
+  // CREATE TABLE IF NOT EXISTS skips everything it declares when the table exists.
+  return node.if_not_exists === true ? conditionalOn(tableObject.key, effects) : effects;
 }
 
 export function handleCreateTableAs(node: CreateTableAsStmt, ctx: HandlerContext): Effect[] {
@@ -116,7 +125,9 @@ export function handleCreateSeqStmt(node: CreateSeqStmt, ctx: HandlerContext): E
     return [noteEffect(ctx, 'ignored', 'temporary sequence: it does not outlive the session')];
   }
   const name = relationName(node.sequence, ctx.schema);
-  return [objectEffect(relationObject('sequence', name, 'present', ctx.source))];
+  const sequence = relationObject('sequence', name, 'present', ctx.source);
+  const effects = [objectEffect(sequence)];
+  return node.if_not_exists === true ? conditionalOn(sequence.key, effects) : effects;
 }
 
 export function handleAlterTable(node: AlterTableStmt, ctx: HandlerContext): Effect[] {
@@ -149,7 +160,12 @@ function alterTableCommand(
   switch (cmd.subtype ?? 'AT_AddColumn') {
     case 'AT_AddColumn': {
       const def = columnDefOf(cmd.def);
-      return def === undefined ? [] : columnDefinition(def, table, ctx, false);
+      if (def === undefined) return [];
+      const effects = columnDefinition(def, table, ctx, false);
+      // ADD COLUMN IF NOT EXISTS skips the column and its constraints when the column exists.
+      if (cmd.missing_ok !== true) return effects;
+      const column = columnObject(table, def.colname ?? '', 'present', NO_ATTRIBUTES, ctx.source);
+      return conditionalOn(column.key, effects);
     }
     case 'AT_DropColumn':
       return [
@@ -221,21 +237,41 @@ function columnDefinition(
   return effects;
 }
 
-/** ADD CONSTRAINT; a primary key also makes its columns NOT NULL. */
+/**
+ * ADD CONSTRAINT; a primary key also makes its columns NOT NULL. `ADD CONSTRAINT c UNIQUE|PRIMARY
+ * KEY USING INDEX i` renames index i to c (when the names differ), so that comes first.
+ */
 function addedConstraint(c: Constraint, table: QualifiedName, ctx: HandlerContext): Effect[] {
-  const effects: Effect[] = notNullColumns(c).map((name) =>
+  const effects: Effect[] = [];
+  if (c.indexname !== undefined && c.conname !== undefined && c.conname !== c.indexname) {
+    // The index is in the table's schema: USING INDEX only takes an unqualified name.
+    const index = (name: string, expect: 'present' | 'absent') =>
+      indexStub({ schema: table.schema, name }, table.name, expect, ctx.source);
+    effects.push(renameEffect(index(c.indexname, 'absent'), index(c.conname, 'present'), ctx));
+  }
+  const notNull: Effect[] = notNullColumns(c).map((name) =>
     objectEffect(
       columnObject(table, name, 'present', { dataType: null, notNull: true }, ctx.source),
     ),
   );
+  effects.push(...notNull);
   const constraint = constraintObject(c, table, ctx);
   if (constraint !== null) {
     effects.push(objectEffect(constraint));
-  } else if (effects.length === 0) {
+  } else if (notNull.length === 0) {
     const kind = constraintKind(c).replace('CONSTR_', '');
     effects.push(noteEffect(ctx, 'unverifiable', `${kind} constraints are not checked`));
   }
   return effects;
+}
+
+const NO_ATTRIBUTES = { dataType: null, notNull: null };
+
+/** Mark every object among `effects` as skipped by IF NOT EXISTS when `guard` already exists. */
+function conditionalOn(guard: string, effects: Effect[]): Effect[] {
+  return effects.map((e) =>
+    e.type === 'object' ? { ...e, object: { ...e.object, conditional: guard } } : e,
+  );
 }
 
 function rls(

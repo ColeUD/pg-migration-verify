@@ -342,6 +342,23 @@ describe('parser output verified against a real catalog', () => {
     expect(report.matched).toBe(EXPECTED_CHECKS);
   });
 
+  it('predicts the name Postgres generated for every unnamed constraint and index', () => {
+    const unnamed = parsed.objects.flatMap((o) =>
+      (o.kind === 'constraint' || o.kind === 'index') && o.name === null && o.expect === 'present'
+        ? [o]
+        : [],
+    );
+    const missing = unnamed.filter((o) =>
+      o.kind === 'constraint'
+        ? !snapshot.constraints.some(
+            (c) => c.schema === o.schema && c.table === o.table && c.name === o.impliedName,
+          )
+        : !snapshot.indexes.some((i) => i.schema === o.schema && i.name === o.impliedName),
+    );
+    expect(missing.map((o) => `${o.key} -> ${o.impliedName ?? '?'}`)).toEqual([]);
+    expect(unnamed.length).toBeGreaterThan(10);
+  });
+
   it('formats the report with only the statements it cannot check', () => {
     expect(formatMigrationReport(report)).toBe(
       [

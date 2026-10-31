@@ -71,6 +71,52 @@ describe('absent over present', () => {
     ]);
   });
 
+  it('DROP TABLE also removes foreign keys of other tables that reference it', () => {
+    const result = parse(`
+      create table p (id int primary key);
+      create table q (id int primary key, p_id int references p (id));
+      create table r (id int primary key, q_id int references q (id));
+      drop table p cascade;`);
+    expect(keys(result)).not.toContain('constraint:public.q.foreign_key(p_id)');
+    expect(keys(result)).toContain('column:public.q.p_id');
+    expect(keys(result)).toContain('constraint:public.r.foreign_key(q_id)');
+  });
+
+  it('DROP COLUMN also removes foreign keys that reference the column', () => {
+    const result = parse(`
+      create table p (id int primary key, code text unique);
+      create table q (id int, p_code text references p (code));
+      alter table p drop column code cascade;`);
+    expect(keys(result)).not.toContain('constraint:public.q.foreign_key(p_code)');
+  });
+
+  it('DROP FUNCTION also removes triggers that execute it, and only those', () => {
+    const result = parse(`
+      create table r (id int);
+      create function touch() returns trigger language plpgsql as $$ begin return new; end $$;
+      create function audit() returns trigger language plpgsql as $$ begin return new; end $$;
+      create trigger r_touch before update on r for each row execute function touch();
+      create trigger r_touch_q before insert on r for each row execute function public.touch();
+      create trigger r_audit after update on r for each row execute function audit();
+      drop function public.touch() cascade;`);
+    expect(keys(result)).not.toContain('trigger:public.r.r_touch');
+    expect(keys(result)).not.toContain('trigger:public.r.r_touch_q');
+    expect(keys(result)).toContain('trigger:public.r.r_audit');
+  });
+
+  it('DROP TYPE also removes columns of that type, arrays included', () => {
+    const result = parse(`
+      create type col_t as enum ('a');
+      create table dt (id int, s col_t, ss col_t[], t text);
+      drop type col_t cascade;`);
+    expect(keys(result)).toEqual([
+      'type:public.col_t',
+      'relation:public.dt',
+      'column:public.dt.id',
+      'column:public.dt.t',
+    ]);
+  });
+
   it('DROP SCHEMA ... CASCADE removes everything this file put in the schema', () => {
     const result = parse(`
       create schema app;
@@ -123,6 +169,62 @@ describe('present over absent (re-created)', () => {
     expect(objectAt(result, 'relation:public.todos').source.statementIndex).toBe(1);
   });
 
+  it('marks the re-created object with the statement that dropped the earlier one', () => {
+    const result = parse(`
+      drop table if exists public.settings;
+      create table public.settings (id int primary key, theme text not null);`);
+    const settings = objectAt(result, 'relation:public.settings');
+    expect(settings.recreated?.statementIndex).toBe(0);
+    // Only the re-created object carries the marker; its new columns are simply present.
+    expect(objectAt(result, 'column:public.settings.id')).not.toHaveProperty('recreated');
+  });
+
+  it('keeps the marker when later statements of the file alter the re-created object', () => {
+    const result = parse(`
+      drop table t;
+      create table t (a int);
+      alter table t alter column a set not null;
+      create index t_a on t (a);
+      drop index t_a;
+      create index t_a on t (a, a);`);
+    expect(objectAt(result, 'relation:public.t').recreated?.statementIndex).toBe(0);
+    expect(objectAt(result, 'relation:public.t_a').recreated?.statementIndex).toBe(4);
+  });
+
+  it('records the enum rebuild that removes a value: rename away, create again, drop the old', () => {
+    const result = parse(`
+      alter type public.task_status rename to task_status_old;
+      create type public.task_status as enum ('todo', 'doing', 'done');
+      alter table tasks alter column status type public.task_status using status::text::public.task_status;
+      drop type public.task_status_old;`);
+    expect(net(result)).toEqual([
+      ['type:public.task_status', 'present'],
+      ['type:public.task_status_old', 'absent'],
+      ['enum_value:public.task_status.todo', 'present'],
+      ['enum_value:public.task_status.doing', 'present'],
+      ['enum_value:public.task_status.done', 'present'],
+      ['column:public.tasks.status', 'present'],
+    ]);
+    expect(objectAt(result, 'type:public.task_status').recreated?.statementIndex).toBe(0);
+  });
+
+  it('marks an object renamed onto a name the file dropped, but not a plain rename target', () => {
+    const result = parse(`
+      drop table t;
+      alter table t_new rename to t;
+      alter table u rename to u2;`);
+    expect(objectAt(result, 'relation:public.t').recreated?.statementIndex).toBe(0);
+    expect(objectAt(result, 'relation:public.u2')).not.toHaveProperty('recreated');
+  });
+
+  it('does not carry the marker to a new name when the re-created object is renamed', () => {
+    const result = parse(`
+      drop table t;
+      create table t (a int);
+      alter table t rename to t2;`);
+    expect(objectAt(result, 'relation:public.t2')).not.toHaveProperty('recreated');
+  });
+
   it('DROP FUNCTION f then CREATE FUNCTION f(...) expects only the new function', () => {
     const result = parse(`
       drop function if exists f;
@@ -159,6 +261,25 @@ describe('renames', () => {
     expect(objectAt(result, 'constraint:public.comments.foreign_key(todo_id)')).toMatchObject({
       references: { schema: 'public', table: 'tasks', columns: ['id'] },
     });
+  });
+
+  it('records renames for the timeline, in order, except of what the file re-created', () => {
+    const result = parse(`
+      alter table todos rename column title to headline;
+      set search_path = app;
+      alter type mood rename to feeling;
+      drop table settings;
+      create table settings (id int);
+      alter table settings rename to prefs;
+      alter table app.prefs rename to prefs2;`);
+    expect(
+      result.renames.map((r) => [r.from.key, r.from.expect, r.to.key, r.to.expect, r.searchSchema]),
+    ).toEqual([
+      ['column:public.todos.title', 'absent', 'column:public.todos.headline', 'present', 'public'],
+      ['type:app.mood', 'absent', 'type:app.feeling', 'present', 'app'],
+      // settings -> prefs renamed the table this file re-created, which no earlier file has.
+      ['relation:app.prefs', 'absent', 'relation:app.prefs2', 'present', 'app'],
+    ]);
   });
 
   it('RENAME TABLE of a table from an earlier migration: old name absent, new name present', () => {
@@ -334,6 +455,233 @@ describe('renames', () => {
         'the new name of function public.legacy_fn(...) is not checked: write the argument list so the function can be identified',
       ],
     ]);
+  });
+});
+
+describe('generated names of unnamed indexes and constraints', () => {
+  it('DROP CONSTRAINT by the generated name removes the unnamed constraint', () => {
+    const result = parse(`
+      create table public.inl (id int primary key, code text unique);
+      alter table public.inl drop constraint inl_code_key;`);
+    expect(net(result)).toEqual([
+      ['relation:public.inl', 'present'],
+      ['column:public.inl.id', 'present'],
+      ['constraint:public.inl.primary_key(id)', 'present'],
+      ['column:public.inl.code', 'present'],
+      ['constraint:public.inl.inl_code_key', 'absent'],
+    ]);
+  });
+
+  it('DROP INDEX by the generated name removes the unnamed index and keeps its table', () => {
+    const result = parse(`
+      create index on public.profiles (email);
+      drop index public.profiles_email_idx;`);
+    expect(net(result)).toEqual([['relation:public.profiles_email_idx', 'absent']]);
+    expect(objectAt(result, 'relation:public.profiles_email_idx')).toMatchObject({
+      table: 'profiles',
+    });
+  });
+
+  it('RENAME CONSTRAINT and ALTER INDEX RENAME by the generated name keep the shape', () => {
+    const result = parse(`
+      create table t (id int, code text unique);
+      create index on t (id);
+      alter table t rename constraint t_code_key to t_code_unique;
+      alter index t_id_idx rename to t_id_lookup;`);
+    expect(net(result)).toEqual([
+      ['relation:public.t', 'present'],
+      ['column:public.t.id', 'present'],
+      ['column:public.t.code', 'present'],
+      ['constraint:public.t.t_code_key', 'absent'],
+      ['constraint:public.t.t_code_unique', 'present'],
+      ['relation:public.t_id_idx', 'absent'],
+      ['relation:public.t_id_lookup', 'present'],
+    ]);
+    const constraint = objectAt(result, 'constraint:public.t.t_code_unique');
+    expect(constraint).toMatchObject({ constraintType: 'unique', columns: ['code'] });
+    expect(constraint).not.toHaveProperty('impliedName');
+    expect(objectAt(result, 'relation:public.t_id_lookup')).toMatchObject({
+      kind: 'index',
+      table: 't',
+      columns: ['id'],
+    });
+  });
+
+  it('does not match a name Postgres would not have generated for it', () => {
+    const result = parse(`
+      create table t (code text unique);
+      alter table t drop constraint t_code_key1;
+      alter table other drop constraint t_code_key;`);
+    expect(objectAt(result, 'constraint:public.t.unique(code)').expect).toBe('present');
+  });
+});
+
+describe('ADD CONSTRAINT ... USING INDEX', () => {
+  it.each([
+    ['unique', 'create unique index widgets_code_idx on public.widgets (code)'],
+    ['primary key', 'create unique index widgets_code_idx on public.widgets (code)'],
+  ])('renames the index to the %s constraint', (type, createIndex) => {
+    const result = parse(`
+      create table public.widgets (id int not null, code text not null);
+      ${createIndex};
+      alter table public.widgets add constraint widgets_code_key ${type} using index widgets_code_idx;`);
+    expect(objectAt(result, 'relation:public.widgets_code_idx').expect).toBe('absent');
+    expect(objectAt(result, 'relation:public.widgets_code_key')).toMatchObject({
+      kind: 'index',
+      expect: 'present',
+      table: 'widgets',
+      unique: true,
+      columns: ['code'],
+    });
+    expect(objectAt(result, 'constraint:public.widgets.widgets_code_key')).toMatchObject({
+      expect: 'present',
+      constraintType: type === 'unique' ? 'unique' : 'primary_key',
+    });
+  });
+
+  it('renames an index created by an earlier migration (old name absent)', () => {
+    const result = parse(
+      'alter table public.widgets add constraint widgets_pkey primary key using index widgets_id_idx',
+    );
+    expect(net(result)).toEqual([
+      ['relation:public.widgets_id_idx', 'absent'],
+      ['relation:public.widgets_pkey', 'present'],
+      ['constraint:public.widgets.widgets_pkey', 'present'],
+    ]);
+  });
+
+  it.each([
+    'alter table widgets add unique using index widgets_code_key',
+    'alter table widgets add constraint widgets_code_key unique using index widgets_code_key',
+  ])('renames nothing when the names agree: %s', (sql) => {
+    expect(net(parse(sql))).toEqual([['constraint:public.widgets.widgets_code_key', 'present']]);
+  });
+});
+
+describe('references to a renamed type or function', () => {
+  it('rewrites column types that name a type renamed in the same file', () => {
+    const result = parse(`
+      create type mood as enum ('a');
+      create table t (m mood, m2 public.mood[], o app.mood);
+      alter type mood rename to feeling;`);
+    expect(objectAt(result, 'column:public.t.m')).toMatchObject({ dataType: 'feeling' });
+    expect(objectAt(result, 'column:public.t.m2')).toMatchObject({ dataType: 'public.feeling[]' });
+    expect(objectAt(result, 'column:public.t.o')).toMatchObject({ dataType: 'app.mood' });
+  });
+
+  it('rewrites columns of a renamed domain, and qualified ones on SET SCHEMA', () => {
+    const result = parse(`
+      create domain d as int;
+      create table t (x d, y public.d);
+      alter domain d rename to e;
+      alter domain e set schema app;`);
+    expect(objectAt(result, 'column:public.t.x')).toMatchObject({ dataType: 'e' });
+    expect(objectAt(result, 'column:public.t.y')).toMatchObject({ dataType: 'app.e' });
+  });
+
+  it('follows the search path: a bare name means the type in the current schema', () => {
+    const result = parse(`
+      set search_path = app;
+      create type mood as enum ('a');
+      create table t (m mood);
+      alter type mood rename to feeling;`);
+    expect(objectAt(result, 'column:app.t.m')).toMatchObject({ dataType: 'feeling' });
+  });
+
+  it('rewrites the signature of a function whose argument type is renamed', () => {
+    const result = parse(`
+      create type mood as enum ('a');
+      create function f(m mood) returns int language sql as $$ select 1 $$;
+      alter type mood rename to feeling;`);
+    expect(keys(result)).toContain('function:public.f(feeling)');
+    expect(keys(result)).not.toContain('function:public.f(mood)');
+  });
+
+  it('rewrites the function of triggers when the trigger function is renamed', () => {
+    const result = parse(`
+      create function public.f_touch() returns trigger language plpgsql as $$ begin return new; end $$;
+      create trigger t_qualified before update on diary for each row execute function public.f_touch();
+      create trigger t_bare before update on diary for each row execute function f_touch();
+      create trigger t_other before update on diary for each row execute function app.f_touch();
+      alter function public.f_touch() rename to f_touch2;`);
+    expect(objectAt(result, 'trigger:public.diary.t_qualified')).toMatchObject({
+      function: { schema: 'public', name: 'f_touch2' },
+    });
+    expect(objectAt(result, 'trigger:public.diary.t_bare')).toMatchObject({
+      function: { schema: null, name: 'f_touch2' },
+    });
+    expect(objectAt(result, 'trigger:public.diary.t_other')).toMatchObject({
+      function: { schema: 'app', name: 'f_touch' },
+    });
+  });
+
+  it('moves qualified trigger function references on SET SCHEMA', () => {
+    const result = parse(`
+      create trigger t before update on diary for each row execute function public.f();
+      alter function public.f() set schema app;`);
+    expect(objectAt(result, 'trigger:public.diary.t')).toMatchObject({
+      function: { schema: 'app', name: 'f' },
+    });
+  });
+
+  it('leaves triggers alone when an overload with arguments is renamed', () => {
+    const result = parse(`
+      create trigger t before update on diary for each row execute function f();
+      alter function f(integer) rename to g;`);
+    expect(objectAt(result, 'trigger:public.diary.t')).toMatchObject({
+      function: { schema: null, name: 'f' },
+    });
+  });
+});
+
+describe('IF NOT EXISTS within one file', () => {
+  it('ADD COLUMN IF NOT EXISTS of a column the file created does nothing', () => {
+    const result = parse(`
+      create table t (a int);
+      alter table t add column if not exists a text;`);
+    expect(attributes(objectAt(result, 'column:public.t.a'))).toMatchObject({
+      dataType: 'integer',
+      notNull: false,
+    });
+    expect(objectAt(result, 'column:public.t.a')).not.toHaveProperty('conditional');
+  });
+
+  it('CREATE TABLE IF NOT EXISTS of a table the file created declares nothing', () => {
+    const result = parse(`
+      create table t (a int);
+      create table if not exists t (a bigint not null, b text unique);`);
+    expect(net(result)).toEqual([
+      ['relation:public.t', 'present'],
+      ['column:public.t.a', 'present'],
+    ]);
+    expect(objectAt(result, 'column:public.t.a')).toMatchObject({ dataType: 'integer' });
+  });
+
+  it('is certain to run after a DROP in the same file', () => {
+    const result = parse(`
+      drop table if exists t;
+      create table if not exists t (a int);
+      alter table t drop column if exists b;
+      alter table t add column if not exists b text;`);
+    expect(result.objects.filter((o) => o.conditional !== undefined)).toEqual([]);
+    expect(objectAt(result, 'relation:public.t').recreated?.statementIndex).toBe(0);
+  });
+
+  it('stays conditional on what the file does not know about', () => {
+    const result = parse('create table if not exists t (a int);');
+    expect(result.objects.map((o) => o.conditional)).toEqual([
+      'relation:public.t',
+      'relation:public.t',
+    ]);
+  });
+
+  it('a definite ALTER after a conditional CREATE asserts only what the ALTER says', () => {
+    const result = parse(`
+      create table if not exists t (a int not null);
+      alter table t alter column a type bigint;`);
+    const a = objectAt(result, 'column:public.t.a');
+    expect(attributes(a)).toMatchObject({ dataType: 'bigint', notNull: null });
+    expect(a).not.toHaveProperty('conditional');
   });
 });
 

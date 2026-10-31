@@ -144,6 +144,7 @@ describe('MCP tools against Postgres as a role without grants', () => {
       mismatch: 1,
       nothingToVerify: 0,
       appliedNotRecorded: 1,
+      unprovenNotRecorded: 0,
       recordedButMismatch: 1,
     });
 

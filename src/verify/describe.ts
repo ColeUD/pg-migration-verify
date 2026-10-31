@@ -1,10 +1,11 @@
 import { describeObject } from '../keys.js';
-import type { ExpectedObject } from '../model.js';
+import type { ExpectedObject, FkAction } from '../model.js';
 import { qualifiedName } from '../sql-ident.js';
 import {
   columnListText,
   constraintTypeText,
   eventsText,
+  fkActionText,
   functionRefText,
   nullabilityText,
   referencesText,
@@ -55,6 +56,9 @@ function expectedAttributes(o: ExpectedObject): string[] {
               o.columns === null ? null : columnListText(o.columns),
             ]),
         o.references === null ? null : `references ${referencesText(o.references)}`,
+        // NO ACTION is the default; only a chosen action is worth reading.
+        actionText('on delete', o.references?.onDelete ?? null),
+        actionText('on update', o.references?.onUpdate ?? null),
       ]);
     case 'trigger':
       return present([
@@ -90,4 +94,8 @@ function present(parts: (string | null)[]): string[] {
 function phrase(parts: (string | null)[]): string | null {
   const words = present(parts);
   return words.length === 0 ? null : words.join(' ');
+}
+
+function actionText(clause: string, action: FkAction | null): string | null {
+  return action === null || action === 'no_action' ? null : `${clause} ${fkActionText(action)}`;
 }

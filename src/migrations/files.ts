@@ -1,12 +1,12 @@
 import { createHash } from 'node:crypto';
-import { readdir, readFile } from 'node:fs/promises';
+import { readdir, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import type { MigrationFile } from '../model.js';
-import { compareMigrationFiles } from '../versions.js';
+import { compareMigrationFiles, compareVersions } from '../versions.js';
 
 /** Result of scanning a migrations directory. */
 export interface MigrationListing {
-  /** Valid migration files, sorted by version (then file name). */
+  /** Valid migration files, in apply order (by file name, as the Supabase CLI applies them). */
   files: MigrationFile[];
   /** `.sql` files that are not migrations by naming convention, so they are never verified. */
   skipped: { fileName: string; reason: string }[];
@@ -22,6 +22,20 @@ const MIGRATION_FILE_NAME = /^(\d+)_(.+)\.sql$/;
 
 const MAX_LISTED_CANDIDATES = 10;
 
+/** Migrations are hand-written DDL; a larger file is a data dump and is not read at all. */
+export const MAX_MIGRATION_FILE_BYTES = 10 * 1024 * 1024;
+
+/** Reason given for a `.sql` file the Supabase CLI ignores because of its name. */
+const MISNAMED_REASON =
+  'file name does not match <version>_<name>.sql (e.g. 20240101120000_init.sql)';
+
+const TOO_LARGE_PREFIX = 'larger than';
+
+export interface ListingOptions {
+  /** Files larger than this are skipped unread. Default {@link MAX_MIGRATION_FILE_BYTES}. */
+  maxFileBytes?: number;
+}
+
 /**
  * Lists the migration files of a directory (non-recursive, `.sql` only), the way the Supabase CLI
  * would see them. Misnamed `.sql` files are reported instead of silently ignored, because a file
@@ -29,7 +43,11 @@ const MAX_LISTED_CANDIDATES = 10;
  *
  * @throws Error naming the directory when it does not exist or is not a directory.
  */
-export async function listMigrationFiles(dir: string): Promise<MigrationListing> {
+export async function listMigrationFiles(
+  dir: string,
+  options: ListingOptions = {},
+): Promise<MigrationListing> {
+  const maxFileBytes = options.maxFileBytes ?? MAX_MIGRATION_FILE_BYTES;
   const absoluteDir = path.resolve(dir);
   let entries;
   try {
@@ -55,13 +73,14 @@ export async function listMigrationFiles(dir: string): Promise<MigrationListing>
   for (const fileName of sqlFileNames) {
     const match = MIGRATION_FILE_NAME.exec(fileName);
     if (match?.[1] === undefined || match[2] === undefined) {
-      skipped.push({
-        fileName,
-        reason: 'file name does not match <version>_<name>.sql (e.g. 20240101120000_init.sql)',
-      });
+      skipped.push({ fileName, reason: MISNAMED_REASON });
       continue;
     }
     const filePath = path.join(absoluteDir, fileName);
+    if ((await stat(filePath)).size > maxFileBytes) {
+      skipped.push({ fileName, reason: tooLargeReason(maxFileBytes) });
+      continue;
+    }
     const bytes = await readFile(filePath);
     files.push({
       version: match[1],
@@ -76,14 +95,27 @@ export async function listMigrationFiles(dir: string): Promise<MigrationListing>
   return { files, skipped, duplicateVersions: findDuplicateVersions(files) };
 }
 
-function findDuplicateVersions(sortedFiles: readonly MigrationFile[]): string[] {
-  const duplicates: string[] = [];
-  for (let i = 1; i < sortedFiles.length; i++) {
-    const version = sortedFiles[i]?.version;
-    const isRepeat = version !== undefined && version === sortedFiles[i - 1]?.version;
-    if (isRepeat && duplicates.at(-1) !== version) duplicates.push(version);
-  }
-  return duplicates;
+/** Reason given for a file over the size limit; not read, so not verified. */
+export function tooLargeReason(maxFileBytes: number = MAX_MIGRATION_FILE_BYTES): string {
+  const limit =
+    maxFileBytes % (1024 * 1024) === 0
+      ? `${maxFileBytes / (1024 * 1024)} MB`
+      : `${maxFileBytes} bytes`;
+  return `${TOO_LARGE_PREFIX} ${limit}, not read (a data dump rather than a migration?)`;
+}
+
+/** Whether a skipped file was left out for its size (the CLI would still apply it). */
+export function isOversized(skipped: { reason: string }): boolean {
+  return skipped.reason.startsWith(TOO_LARGE_PREFIX);
+}
+
+function findDuplicateVersions(files: readonly MigrationFile[]): string[] {
+  const counts = new Map<string, number>();
+  for (const f of files) counts.set(f.version, (counts.get(f.version) ?? 0) + 1);
+  return [...counts]
+    .filter(([, count]) => count > 1)
+    .map(([version]) => version)
+    .sort(compareVersions);
 }
 
 /**

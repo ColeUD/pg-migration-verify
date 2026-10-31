@@ -3,8 +3,9 @@
  * tests use hand-built expectations and the parser tests never see a catalog; this file proves the
  * two agree on what crosses between them: type spelling (`varchar(40)` vs `character varying(40)`,
  * bare `plan` vs `public.plan`), object keys, unnamed constraints and indexes matched against the
- * names Postgres generated, an index renamed in a later file (whose table the parser cannot know),
- * and later migrations superseding earlier objects.
+ * names Postgres generated, an index renamed in a later file (whose table the parser cannot know)
+ * and followed there by the earlier file's expectation, and later migrations superseding earlier
+ * objects.
  */
 import { beforeAll, describe, expect, it } from 'vitest';
 import type { MigrationFile, MigrationReport } from '../../src/model.js';
@@ -149,10 +150,17 @@ describe('parse, verify and format a partially applied database', () => {
     const todos = reports[1]!;
     const verbose = formatMigrationReport(todos, { verbose: true }).split('\n');
     expect(verbose).toContain(
-      '  SUPERSEDED   line 2   column public.todos.legacy_flag: dropped or renamed by 20240103000000_todos_priority.sql line 3',
+      '  SUPERSEDED   line 2   column public.todos.legacy_flag: dropped by 20240103000000_todos_priority.sql line 3',
     );
     expect(verbose).toContain(
-      '  SUPERSEDED   line 10  function public.archive_todo(integer): dropped or renamed by 20240103000000_todos_priority.sql line 6',
+      '  SUPERSEDED   line 10  function public.archive_todo(integer): dropped by 20240103000000_todos_priority.sql line 6',
+    );
+    // Renamed in the later file by the name Postgres generated for it: checked under the new name.
+    expect(verbose).toEqual(
+      expect.arrayContaining([
+        '  MATCH        line 9   index public.todos_owner_idx',
+        '                        note: renamed from index on public.todos (owner_id) by 20240103000000_todos_priority.sql line 8',
+      ]),
     );
     expect(todos.checks.find((c) => c.object.key === 'column:public.todos.due')?.notes).toEqual([
       'type updated by 20240103000000_todos_priority.sql line 4',

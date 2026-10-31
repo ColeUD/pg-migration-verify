@@ -15,21 +15,13 @@ Skipped 1 .sql file not named <version>_<name>.sql (never applied by the Supabas
 MISMATCH 21/23  20240305120000_create_tasks.sql
   MISSING    line 5   column public.tasks.due_on (date, nullable)
   MISSING    line 18  index public.tasks_project_status_idx (on public.tasks (project_id, status), using btree)
-  SUPERSEDED line 19  index public.tasks_assignee_idx: dropped or renamed by 20240320090000_rework_profiles_and_tasks.sql line 12
+  SUPERSEDED line 19  index public.tasks_assignee_idx: dropped by 20240320090000_rework_profiles_and_tasks.sql line 12
   history: recorded in supabase_migrations.schema_migrations
 
 MISMATCH 12/14  20240310083000_create_comments.sql
   MISSING      line 26  policy "Authors write comments" on public.comments (for INSERT, to authenticated)
   DIFFERENT    line 3   column public.comments.body: nullability expected not null, found nullable
-  SUPERSEDED   line 34  table public.task_events: dropped or renamed by 20240320090000_rework_profiles_and_tasks.sql line 16
-  SUPERSEDED   line 34  column public.task_events.id: table public.task_events dropped or renamed by 20240320090000_rework_profiles_and_tasks.sql line 16
-  SUPERSEDED   line 34  primary key on public.task_events (id): table public.task_events dropped or renamed by 20240320090000_rework_profiles_and_tasks.sql line 16
-  SUPERSEDED   line 34  column public.task_events.task_id: table public.task_events dropped or renamed by 20240320090000_rework_profiles_and_tasks.sql line 16
-  SUPERSEDED   line 34  foreign key on public.task_events (task_id): table public.task_events dropped or renamed by 20240320090000_rework_profiles_and_tasks.sql line 16
-  SUPERSEDED   line 34  column public.task_events.kind: table public.task_events dropped or renamed by 20240320090000_rework_profiles_and_tasks.sql line 16
-  SUPERSEDED   line 34  column public.task_events.payload: table public.task_events dropped or renamed by 20240320090000_rework_profiles_and_tasks.sql line 16
-  SUPERSEDED   line 34  column public.task_events.created_at: table public.task_events dropped or renamed by 20240320090000_rework_profiles_and_tasks.sql line 16
-  SUPERSEDED   line 42  index public.task_events_task_id_idx: table public.task_events dropped or renamed by 20240320090000_rework_profiles_and_tasks.sql line 16
+  SUPERSEDED   line 34  table public.task_events (and 5 columns, 1 index, 2 constraints): dropped by 20240320090000_rework_profiles_and_tasks.sql line 16
   UNVERIFIABLE line 30  GrantStmt: privileges are not checked
   UNVERIFIABLE line 32  CommentStmt: comments are not checked
   history: NOT recorded in supabase_migrations.schema_migrations

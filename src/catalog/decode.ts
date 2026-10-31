@@ -1,4 +1,5 @@
 import type {
+  FkAction,
   ConstraintType,
   PolicyCommand,
   RelationKind,
@@ -38,6 +39,19 @@ const CONSTRAINT_TYPES: Readonly<Record<string, ConstraintType>> = {
 /** `pg_constraint.contype` -> model type. The query only returns p, u, f, c and x. */
 export function constraintType(contype: string): ConstraintType {
   return lookup(CONSTRAINT_TYPES, contype, 'pg_constraint.contype');
+}
+
+const FK_ACTIONS: Readonly<Record<string, FkAction>> = {
+  a: 'no_action',
+  r: 'restrict',
+  c: 'cascade',
+  n: 'set_null',
+  d: 'set_default',
+};
+
+/** `pg_constraint.confdeltype` / `confupdtype` of a foreign key -> model action. */
+export function fkAction(code: string): FkAction {
+  return lookup(FK_ACTIONS, code, 'pg_constraint.confdeltype');
 }
 
 // pg_trigger.tgtype bits, from src/include/catalog/pg_trigger.h.

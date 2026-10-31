@@ -60,7 +60,7 @@ export function checkEntry(check: ObjectCheck): CheckEntry {
     inDoBlock: object.source.inDoBlock === true,
     differences: check.differences.map((d) => ({ ...d })),
     notes: [...check.notes],
-    supersededBy: check.supersededBy === undefined ? null : { ...check.supersededBy },
+    supersededBy: check.status === 'superseded' ? { ...check.supersededBy } : null,
   };
 }
 
@@ -79,6 +79,7 @@ export function migrationEntry(report: MigrationReport): MigrationEntry {
     verdict: report.verdict,
     matched: report.matched,
     checked: report.checked,
+    evidence: report.evidence,
     superseded: report.checks.filter((c) => c.status === 'superseded').length,
     unverifiable: report.notes.filter((n) => n.category === 'unverifiable').length,
     recorded: report.recorded,

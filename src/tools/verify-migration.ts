@@ -25,7 +25,7 @@ export async function verifyMigration(
   // Resolve before the expensive part, so a typo fails fast with a list of candidates.
   const target = resolveMigration(listing.files, input.file);
   const migrations = await parseMigrations(context, listing.files);
-  const { reports, history } = await verifyAgainstDatabase(db, migrations);
+  const { reports, history } = await verifyAgainstDatabase(db, migrations, target.fileName);
 
   const report = reports.find((r) => r.file === target.fileName);
   if (report === undefined) throw new Error(`No report was produced for ${target.fileName}.`);

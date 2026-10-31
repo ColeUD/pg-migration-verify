@@ -20,9 +20,10 @@ const column = (tableName: string, name: string, dataType: string, notNull: bool
   dataType,
   notNull,
 });
+/** `name` is the constraint's name, or for an unnamed one the name Postgres will generate. */
 const constraint = (
   tableName: string,
-  name: string | null,
+  name: string | { implied: string },
   constraintType: ConstraintObject['constraintType'],
   columns: string[],
   references: ConstraintObject['references'] = null,
@@ -31,10 +32,11 @@ const constraint = (
   ...present,
   schema: 'public',
   table: tableName,
-  name,
+  name: typeof name === 'string' ? name : null,
   constraintType,
   columns,
   references,
+  ...(typeof name === 'string' ? {} : { impliedName: name.implied }),
 });
 const rls = (tableName: string) => ({
   kind: 'rls',
@@ -68,14 +70,16 @@ describe('a Supabase-style migration', () => {
 
       table('profiles'),
       column('profiles', 'id', 'uuid', true),
-      constraint('profiles', null, 'primary_key', ['id']),
-      constraint('profiles', null, 'foreign_key', ['id'], {
+      constraint('profiles', { implied: 'profiles_pkey' }, 'primary_key', ['id']),
+      constraint('profiles', { implied: 'profiles_id_fkey' }, 'foreign_key', ['id'], {
         schema: 'auth',
         table: 'users',
         columns: ['id'],
+        onDelete: 'cascade',
+        onUpdate: 'no_action',
       }),
       column('profiles', 'username', 'text', false),
-      constraint('profiles', null, 'unique', ['username']),
+      constraint('profiles', { implied: 'profiles_username_key' }, 'unique', ['username']),
       column('profiles', 'full_name', 'text', false),
       column('profiles', 'avatar_url', 'text', false),
       column('profiles', 'updated_at', 'timestamp with time zone', false),
@@ -108,24 +112,28 @@ describe('a Supabase-style migration', () => {
 
       table('projects'),
       column('projects', 'id', 'uuid', true),
-      constraint('projects', null, 'primary_key', ['id']),
+      constraint('projects', { implied: 'projects_pkey' }, 'primary_key', ['id']),
       column('projects', 'owner_id', 'uuid', true),
-      constraint('projects', null, 'foreign_key', ['owner_id'], {
+      constraint('projects', { implied: 'projects_owner_id_fkey' }, 'foreign_key', ['owner_id'], {
         schema: 'public',
         table: 'profiles',
         columns: ['id'],
+        onDelete: 'cascade',
+        onUpdate: 'no_action',
       }),
       column('projects', 'name', 'character varying(120)', true),
       column('projects', 'created_at', 'timestamp with time zone', true),
 
       table('todos'),
       column('todos', 'id', 'bigint', true),
-      constraint('todos', null, 'primary_key', ['id']),
+      constraint('todos', { implied: 'todos_pkey' }, 'primary_key', ['id']),
       column('todos', 'project_id', 'uuid', true),
-      constraint('todos', null, 'foreign_key', ['project_id'], {
+      constraint('todos', { implied: 'todos_project_id_fkey' }, 'foreign_key', ['project_id'], {
         schema: 'public',
         table: 'projects',
         columns: ['id'],
+        onDelete: 'cascade',
+        onUpdate: 'no_action',
       }),
       column('todos', 'title', 'text', true),
       column('todos', 'status', 'public.todo_status', true),

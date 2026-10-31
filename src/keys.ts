@@ -92,6 +92,56 @@ export function parentKey(o: ExpectedObject): string | null {
 }
 
 /**
+ * Whether `named`, a stub from `DROP INDEX`, `DROP CONSTRAINT` or a rename, refers to the unnamed
+ * index or constraint `o` by the name Postgres generated for it (`profiles_username_key`). Index
+ * names are unique per schema, constraint names per table.
+ */
+export function refersToImpliedName(o: ExpectedObject, named: ExpectedObject): boolean {
+  if (o.kind === 'constraint' && named.kind === 'constraint') {
+    return (
+      o.impliedName !== undefined &&
+      o.impliedName === named.name &&
+      o.schema === named.schema &&
+      o.table === named.table
+    );
+  }
+  if (o.kind === 'index' && named.kind === 'index') {
+    return o.impliedName !== undefined && o.impliedName === named.name && o.schema === named.schema;
+  }
+  return false;
+}
+
+/**
+ * The object asserting nothing but its existence: every attribute that is not part of its key is
+ * null (not asserted). Columns and types of unnamed indexes and constraints identify them, so
+ * those stay.
+ */
+export function existenceOnly(o: ExpectedObject): ExpectedObject {
+  switch (o.kind) {
+    case 'column':
+      return { ...o, dataType: null, notNull: null };
+    case 'index':
+      return { ...o, unique: null, method: null, columns: o.name === null ? o.columns : null };
+    case 'constraint':
+      return o.name === null
+        ? { ...o, references: null }
+        : { ...o, constraintType: null, columns: null, references: null };
+    case 'trigger':
+      return { ...o, timing: null, events: null, forEachRow: null, function: null };
+    case 'rls':
+      return { ...o, enabled: null, forced: null };
+    case 'policy':
+      return { ...o, command: null, permissive: null, roles: null, using: null, withCheck: null };
+    case 'type':
+      return { ...o, typeKind: null };
+    default:
+      // Schemas, extensions, relations, functions and enum values are identified by what they
+      // assert (a function's kind is part of its signature in practice).
+      return o;
+  }
+}
+
+/**
  * Human-readable one-line name, e.g. `column public.profiles.avatar_url`. Identifiers are quoted
  * like `quote_ident()` (`column app."Todo Items"."projectId"`), so a name with spaces or capitals
  * stays unambiguous and can be pasted back into SQL. Policy names are always quoted: they are

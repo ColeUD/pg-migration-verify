@@ -298,6 +298,46 @@ describe('compareObject: constraints', () => {
       differences: [d('references', 'public.projects (id)', 'public.profiles (id)')],
     },
     {
+      name: 'named foreign key: ON DELETE differs',
+      object: constraint('todos', 'todos_owner_fk', {
+        references: { ...profilesRef, onDelete: 'cascade', onUpdate: 'no_action' },
+      }),
+      catalog: { constraints: [fk] },
+      status: 'different',
+      differences: [d('on delete', 'cascade', 'no action')],
+    },
+    {
+      name: 'named foreign key: same actions',
+      object: constraint('todos', 'todos_owner_fk', {
+        references: { ...profilesRef, onDelete: 'no_action', onUpdate: 'no_action' },
+      }),
+      catalog: { constraints: [fk] },
+      status: 'match',
+    },
+    {
+      name: 'unnamed foreign key: ON UPDATE differs, naming the closest match',
+      object: constraint('todos', null, {
+        constraintType: 'foreign_key',
+        columns: ['owner_id'],
+        references: { ...profilesRef, onDelete: 'no_action', onUpdate: 'cascade' },
+      }),
+      catalog: { constraints: [fk] },
+      status: 'different',
+      differences: [d('on update', 'cascade', 'no action')],
+    },
+    {
+      // Documented limitation: CHECK expressions are not compared, only the columns they use.
+      name: 'check constraint widened by hand still matches',
+      object: constraint('items', 'items_price_check', {
+        constraintType: 'check',
+        columns: ['price'],
+      }),
+      catalog: {
+        constraints: [cat.constraint('items', 'items_price_check', 'check', ['price'])],
+      },
+      status: 'match',
+    },
+    {
       name: 'referenced columns are not compared when not asserted',
       object: constraint('todos', 'todos_owner_fk', {
         references: { schema: 'public', table: 'profiles', columns: null },

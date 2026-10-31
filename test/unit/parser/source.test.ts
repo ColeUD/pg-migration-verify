@@ -92,11 +92,24 @@ describe('statement splitting', () => {
   });
 
   it('returns nothing for an empty or comment-only file', () => {
-    expect(parse('')).toEqual({ file: TEST_FILE, objects: [], notes: [], statementCount: 0 });
-    expect(parse('  \n\t')).toEqual({ file: TEST_FILE, objects: [], notes: [], statementCount: 0 });
+    expect(parse('')).toEqual({
+      file: TEST_FILE,
+      objects: [],
+      renames: [],
+      notes: [],
+      statementCount: 0,
+    });
+    expect(parse('  \n\t')).toEqual({
+      file: TEST_FILE,
+      objects: [],
+      renames: [],
+      notes: [],
+      statementCount: 0,
+    });
     expect(parse('-- nothing here\n/* or here */\n')).toEqual({
       file: TEST_FILE,
       objects: [],
+      renames: [],
       notes: [],
       statementCount: 0,
     });

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   constraintType,
   decodeTriggerType,
+  fkAction,
   policyCommand,
   relationKind,
   typeKind,
@@ -34,6 +35,22 @@ describe('constraintType', () => {
 
   it('rejects PostgreSQL 18 NOT NULL constraints, which the query filters out', () => {
     expect(() => constraintType('n')).toThrow("unexpected pg_constraint.contype value 'n'");
+  });
+});
+
+describe('fkAction', () => {
+  it.each([
+    ['a', 'no_action'],
+    ['r', 'restrict'],
+    ['c', 'cascade'],
+    ['n', 'set_null'],
+    ['d', 'set_default'],
+  ])('confdeltype %s -> %s', (code, action) => {
+    expect(fkAction(code)).toBe(action);
+  });
+
+  it('rejects an unknown code', () => {
+    expect(() => fkAction('z')).toThrow("unexpected pg_constraint.confdeltype value 'z'");
   });
 });
 

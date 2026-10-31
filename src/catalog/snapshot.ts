@@ -7,6 +7,7 @@ import {
   relationKind,
   typeKind,
 } from './decode.js';
+import { fkAction } from './decode.js';
 import {
   COLUMNS,
   CONSTRAINTS,
@@ -23,9 +24,11 @@ import {
 } from './queries.js';
 
 /**
- * Reads what actually exists in `schemas` from pg_catalog, in one read-only transaction so every
- * part of the snapshot sees the same moment. `schemas` and `extensions` are listed database-wide
- * (a migration may create or drop a schema the caller did not ask about); everything else is
+ * Reads what actually exists in `schemas` from pg_catalog, in one REPEATABLE READ, read-only
+ * transaction so every query of the snapshot sees the same moment. (The deparse functions,
+ * `format_type` and `pg_get_*def`, read the current catalog instead, so DDL committing at that
+ * very moment can still show up in those strings.) `schemas` and `extensions` are listed
+ * database-wide (a migration may create or drop a schema the caller did not ask about); all else is
  * limited to the covered schemas.
  *
  * Needs no privileges beyond CONNECT: all reads are pg_catalog name joins.
@@ -97,7 +100,13 @@ export async function readCatalogSnapshot(
       columns: r.columns,
       references:
         r.ref_schema !== null && r.ref_table !== null
-          ? { schema: r.ref_schema, table: r.ref_table, columns: r.ref_columns }
+          ? {
+              schema: r.ref_schema,
+              table: r.ref_table,
+              columns: r.ref_columns,
+              onDelete: fkAction(r.del_action),
+              onUpdate: fkAction(r.upd_action),
+            }
           : null,
     })),
     functions: functions.map((r) => ({

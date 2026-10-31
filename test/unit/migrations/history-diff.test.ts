@@ -59,14 +59,15 @@ describe('diffHistory', () => {
     expect(diff.inBoth).toHaveLength(1);
   });
 
-  it('sorts every list by numeric version whatever the input order', () => {
+  it('sorts every list by version as the Supabase CLI compares them (as text)', () => {
     const diff = diffHistory(
       [file('10', 'c'), file('9', 'b'), file('100', 'd'), file('2', 'a')],
       [recorded('9'), recorded('1000'), recorded('2'), recorded('11')],
     );
 
-    expect(versions(diff.onlyInRepo)).toEqual(['10', '100']);
-    expect(versions(diff.onlyInDatabase)).toEqual(['11', '1000']);
+    // Files in apply order (by file name: 100_d.sql before 10_c.sql), rows by version text.
+    expect(versions(diff.onlyInRepo)).toEqual(['100', '10']);
+    expect(versions(diff.onlyInDatabase)).toEqual(['1000', '11']);
     expect(versions(diff.inBoth.map((b) => b.file))).toEqual(['2', '9']);
   });
 

@@ -9,7 +9,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { DatabaseError, type QueryRunner, type ReadOnlyDatabase } from '../../src/catalog/index.js';
+import {
+  DatabaseError,
+  sanitizeDatabaseError,
+  type QueryRunner,
+  type ReadOnlyDatabase,
+} from '../../src/catalog/index.js';
 import type { CatalogQuery } from '../../src/catalog/index.js';
 import { readConfig, type Config } from '../../src/config.js';
 import { createServer } from '../../src/server.js';
@@ -291,6 +296,36 @@ describe('list_repo_migrations', () => {
     expect(result.isError).toBe(true);
     expect(result.text).toContain('Migrations directory not found');
   });
+
+  describe('a dir outside the project', () => {
+    let elsewhere: string;
+    const DUMP = "INSERT INTO users (email) VALUES ('alice@example.test');";
+
+    beforeAll(async () => {
+      // A synthetic dump that happens to look like a migration by name.
+      elsewhere = await mkdtemp(path.join(os.tmpdir(), 'pgmv-elsewhere-'));
+      await writeFile(path.join(elsewhere, '2024_customer_dump.sql'), DUMP);
+    });
+
+    afterAll(async () => {
+      await rm(elsewhere, { recursive: true, force: true });
+    });
+
+    it.each([
+      ['list_repo_migrations', () => ({ dir: elsewhere })],
+      ['list_repo_migrations', () => ({ dir: '../..' })],
+      ['expected_objects', () => ({ file: '2024', dir: elsewhere })],
+      ['verify_all', () => ({ dir: elsewhere })],
+    ])('is refused by %s without reading or naming it', async (name, args) => {
+      const client = await connect(contextWith(fakeDatabase(CATALOG_ROWS)));
+      const result = await call(client, name, args());
+      expect(result.isError).toBe(true);
+      expect(result.text).toMatch(/^dir must be inside the project directory/);
+      for (const fragment of ['2024_customer_dump', 'alice@example.test', elsewhere]) {
+        expect(result.raw).not.toContain(fragment);
+      }
+    });
+  });
 });
 
 describe('list_recorded_migrations', () => {
@@ -513,7 +548,11 @@ describe('verify_all', () => {
     expect(result.isError).toBe(false);
     expect(result.text).toMatch(/^VERSION +NAME +RESULT/);
     expect(result.text).toContain('3 migrations: 2 MATCH, 1 MISMATCH, 0 nothing to verify.');
-    expect(result.text).toContain('1 applied but NOT recorded in history.');
+    // The only unrecorded migration just drops a column, which proves nothing about whether it ran.
+    expect(result.text).not.toContain('applied but NOT recorded');
+    expect(result.text).toContain(
+      '1 NOT recorded, and their MATCH does not show they ran: 20240103000000_drop_legacy.sql',
+    );
     expect(result.text).toContain('Skipped 1 .sql file');
     expect(result.text).toMatch(/\n\nMISMATCH \d+\/\d+ {2}20240102000000_create_todos\.sql/);
     expect(result.text).not.toMatch(/\nMATCH \d+\/\d+ {2}20240101000000/);
@@ -523,7 +562,8 @@ describe('verify_all', () => {
       match: 2,
       mismatch: 1,
       nothingToVerify: 0,
-      appliedNotRecorded: 1,
+      appliedNotRecorded: 0,
+      unprovenNotRecorded: 1,
       recordedButMismatch: 1,
     });
     expect(structured.migrations.map((m) => [m.version, m.verdict, m.recorded])).toEqual([
@@ -581,6 +621,8 @@ describe('secrets', () => {
   const PASSWORD = 'Sup3r-Secret-P@ss';
   const ENCODED_PASSWORD = 'Sup3r-Secret-P%40ss';
   const HOST = 'db.internal.example';
+  /** What HOST resolves to: Node's socket errors name the address, not the host name. */
+  const RESOLVED_IP = '203.0.113.7';
   const SECRET_URL = `postgres://pmv_user:${ENCODED_PASSWORD}@${HOST}:6543/app`;
   const FORBIDDEN = [
     SECRET_URL,
@@ -590,6 +632,7 @@ describe('secrets', () => {
     `pmv_user:${ENCODED_PASSWORD}`,
     `pmv_user:${PASSWORD}`,
     HOST,
+    RESOLVED_IP,
   ];
 
   /** Errors as careless drivers, sockets and libraries write them. */
@@ -602,6 +645,18 @@ describe('secrets', () => {
     () => new DatabaseError('connection', `tls: certificate is not valid for ${HOST}`),
     () => Object.assign(new Error(`getaddrinfo ENOTFOUND ${HOST}`), { input: SECRET_URL }),
     () => SECRET_URL,
+    // What createDatabase() throws (it sanitizes every error) for a socket error that names
+    // the address HOST resolved to.
+    () =>
+      sanitizeDatabaseError(
+        Object.assign(new Error(`connect EADDRNOTAVAIL ${RESOLVED_IP}:6543`), {
+          code: 'EADDRNOTAVAIL',
+          syscall: 'connect',
+          address: RESOLVED_IP,
+          port: 6543,
+        }),
+        SECRET_URL,
+      ),
   ];
 
   /** Calls that reach handlers, and calls the SDK rejects before any handler runs. */

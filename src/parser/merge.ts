@@ -7,23 +7,10 @@
  * Insertion order is preserved (a `Map` keeps the first position of a key when it is overwritten),
  * so reports list objects in the order the migration introduced them.
  */
-import type {
-  ConstraintObject,
-  EnumValueObject,
-  ExpectedObject,
-  FunctionObject,
-  IndexObject,
-  RelationObject,
-} from '../model.js';
-import { parentKey } from '../keys.js';
+import { dependsOn, followRename, RELATION_KINDS, withFields } from '../dependents.js';
+import type { ExpectedObject, FunctionObject, IndexObject, Rename, SourceRef } from '../model.js';
+import { existenceOnly, refersToImpliedName } from '../keys.js';
 import { keyed } from './effects.js';
-
-const RELATION_KINDS: ReadonlySet<ExpectedObject['kind']> = new Set([
-  'table',
-  'view',
-  'materialized_view',
-  'sequence',
-]);
 
 /** Kinds that share the `relation:` key namespace with tables (pg_class). */
 const RELATION_NAMESPACE_KINDS: ReadonlySet<ExpectedObject['kind']> = new Set([
@@ -33,10 +20,16 @@ const RELATION_NAMESPACE_KINDS: ReadonlySet<ExpectedObject['kind']> = new Set([
 
 export class NetEffect {
   #objects = new Map<string, ExpectedObject>();
+  readonly #renames: Rename[] = [];
 
   /** The net expectations, one per key, in first-seen order. */
   get objects(): ExpectedObject[] {
     return [...this.#objects.values()];
+  }
+
+  /** Renames of objects this file did not (re-)create, in statement order. */
+  get renames(): Rename[] {
+    return [...this.#renames];
   }
 
   /**
@@ -45,23 +38,29 @@ export class NetEffect {
    *   statement that created the object;
    * - absent over anything: the object is replaced, and everything this file said about objects
    *   that depend on it (columns, indexes, policies, enum values, ...) is removed with it;
-   * - present over absent: re-created, replaces the absent entry.
+   * - present over absent: re-created, replaces the absent entry and remembers the drop in
+   *   `recreated`, so the timeline knows that earlier versions of the object are gone;
+   * - IF NOT EXISTS over an object this file already created: nothing (see `#ifNotExists`).
    *
-   * `cascade` matters only for `DROP SCHEMA ... CASCADE`, which also removes the schema's contents.
+   * `cascade` matters only for `DROP SCHEMA ... CASCADE`, which also removes the schema's contents;
+   * other dependents (see `dependsOn`) go with a drop either way, since it fails while they exist.
    */
-  add(object: ExpectedObject, cascade = false): void {
-    if (object.expect === 'absent') {
-      this.#addAbsent(object, cascade);
+  add(added: ExpectedObject, cascade = false): void {
+    if (added.expect === 'absent') {
+      this.#addAbsent(added, cascade);
       return;
     }
+    const object = this.#ifNotExists(added);
+    if (object === undefined) return;
     if (object.kind === 'function') this.#forgetUnqualifiedDrop(object.schema, object.name);
     const existing = this.#objects.get(object.key);
-    this.#objects.set(
-      object.key,
-      existing?.expect === 'present' && existing.kind === object.kind
-        ? mergePresent(existing, object)
-        : object,
-    );
+    let next = object;
+    if (existing?.expect === 'present' && existing.kind === object.kind) {
+      next = mergePresent(existing, object);
+    } else if (existing?.expect === 'absent') {
+      next = { ...object, recreated: existing.source };
+    }
+    this.#objects.set(object.key, next);
   }
 
   /**
@@ -69,24 +68,69 @@ export class NetEffect {
    * earlier in this file, `to` carries its known attributes (a renamed column keeps its type) and
    * the objects that belong to it follow it (a renamed table keeps its columns and policies).
    *
+   * Columns of a renamed type and triggers calling a renamed function follow as well, because
+   * Postgres refers to both by OID. `unqualifiedSchema` is where unqualified names resolve at
+   * this point of the file; a bare type or function name is taken to mean that schema.
+   *
+   * Unless this file re-created the object first, the rename is also recorded in `renames`, so
+   * that the timeline can apply it to earlier migrations' objects.
+   *
    * Returns false when the new object cannot be described, which only happens for a function
    * renamed without an argument list that this file did not create.
    */
-  rename(from: ExpectedObject, to: ExpectedObject): boolean {
+  rename(from: ExpectedObject, to: ExpectedObject, unqualifiedSchema: string): boolean {
     const known = this.#findKnown(from);
     const gone = known === undefined ? from : absentVersionOf(from, known);
-    const target =
-      known === undefined ? to : keyed({ ...known, ...changedFields(from, to), source: to.source });
+    const renamed = withoutMarkers(
+      known === undefined ? to : keyed({ ...known, ...changedFields(from, to), source: to.source }),
+    );
+    // A re-created object is not the one earlier migrations created; theirs was dropped.
+    if (known?.recreated === undefined) {
+      this.#renames.push({ from: gone, to: renamed, searchSchema: unqualifiedSchema });
+    }
 
+    // An unnamed index or constraint renamed by its generated name was keyed by its shape.
+    if (known !== undefined && known.key !== gone.key) this.#objects.delete(known.key);
     this.#objects.set(gone.key, gone);
-    if (target.kind === 'function' && target.argTypes === null) return false;
+    if (renamed.kind === 'function' && renamed.argTypes === null) return false;
+    // Renamed onto a name this file dropped earlier: re-created under that name.
+    const previous = this.#objects.get(renamed.key);
+    const target =
+      previous?.expect === 'absent' ? { ...renamed, recreated: previous.source } : renamed;
     this.#objects.set(target.key, target);
-    this.#followRename(gone, target);
+    this.#followRename(gone, target, unqualifiedSchema);
     return true;
   }
 
-  #addAbsent(object: ExpectedObject, cascade: boolean): void {
+  /**
+   * IF NOT EXISTS: `object.conditional` names the object whose existence makes the statement do
+   * nothing. Returns what to apply, or undefined when an earlier statement of this file created
+   * that object, so the statement did nothing. When an earlier statement dropped it (or this very
+   * statement certainly created it), the statement certainly ran and the object is no longer
+   * conditional. Otherwise it stays conditional: whether it ran depends on earlier migrations,
+   * which only the timeline sees.
+   */
+  #ifNotExists(object: ExpectedObject): ExpectedObject | undefined {
+    if (object.conditional === undefined) return object;
+    const guard = this.#objects.get(object.conditional);
     const existing = this.#objects.get(object.key);
+    const createdEarlier = (o: ExpectedObject | undefined): boolean =>
+      o?.expect === 'present' && !sameStatement(o.source, object.source);
+    // The object itself existing proves that its table existed too (CREATE TABLE IF NOT EXISTS).
+    if (createdEarlier(guard) || createdEarlier(existing)) return undefined;
+    if (guard === undefined) return object;
+    return guard.expect === 'absent' || guard.conditional === undefined
+      ? withoutConditional(object)
+      : object;
+  }
+
+  #addAbsent(object: ExpectedObject, cascade: boolean): void {
+    let existing = this.#objects.get(object.key);
+    if (existing === undefined) {
+      // Dropped by the name Postgres generated for an unnamed index or constraint of this file.
+      existing = this.#findByImpliedName(object);
+      if (existing !== undefined) this.#objects.delete(existing.key);
+    }
     // DROP INDEX does not name the table; keep it when this file created the index.
     const absent =
       object.kind === 'index' && object.table === '' && existing?.kind === 'index'
@@ -115,7 +159,7 @@ export class NetEffect {
       );
       return candidates.length === 1 ? candidates[0] : undefined;
     }
-    const existing = this.#objects.get(from.key);
+    const existing = this.#objects.get(from.key) ?? this.#findByImpliedName(from);
     if (existing?.expect !== 'present') return undefined;
     if (existing.kind === from.kind) return existing;
     // ALTER TABLE also renames indexes, views and sequences; they share the relation namespace.
@@ -124,59 +168,17 @@ export class NetEffect {
       : undefined;
   }
 
-  /** Move the objects that belong to a renamed object along with it. */
-  #followRename(gone: ExpectedObject, target: ExpectedObject): void {
-    if (isRelation(target) && isRelation(gone)) {
-      const [oldSchema, oldName] = [gone.schema, gone.name];
-      this.#transform((o) => {
-        let moved = o;
-        if (parentKey(o) === gone.key) {
-          moved = withFields(o, { schema: target.schema, table: target.name });
-        }
-        return retargetReferences(moved, (ref) =>
-          ref.schema === oldSchema && ref.table === oldName
-            ? { ...ref, schema: target.schema, table: target.name }
-            : ref,
-        );
-      });
-    } else if (target.kind === 'type' && gone.kind === 'type') {
-      this.#transform((o) =>
-        o.kind === 'enum_value' && parentKey(o) === gone.key
-          ? keyed<EnumValueObject>({ ...o, schema: target.schema, typeName: target.name })
-          : o,
-      );
-    } else if (target.kind === 'schema' && gone.kind === 'schema') {
-      this.#transform((o) => {
-        const moved =
-          o.kind !== 'schema' && o.schema === gone.name
-            ? withFields(o, { schema: target.name })
-            : o;
-        return retargetReferences(moved, (ref) =>
-          ref.schema === gone.name ? { ...ref, schema: target.name } : ref,
-        );
-      });
-    } else if (target.kind === 'column' && gone.kind === 'column') {
-      this.#renameColumnReferences(gone.schema, gone.table, gone.name, target.name);
+  /** The present unnamed index or constraint that `named` refers to by its generated name. */
+  #findByImpliedName(named: ExpectedObject): ExpectedObject | undefined {
+    for (const o of this.#objects.values()) {
+      if (o.expect === 'present' && refersToImpliedName(o, named)) return o;
     }
+    return undefined;
   }
 
-  /** Indexes and constraints refer to columns by name; Postgres updates them on RENAME COLUMN. */
-  #renameColumnReferences(schema: string, table: string, from: string, to: string): void {
-    const swap = (columns: string[] | null): string[] | null =>
-      columns?.map((c) => (c === from ? to : c)) ?? null;
-    this.#transform((o) => {
-      let moved = o;
-      if (
-        (o.kind === 'index' || o.kind === 'constraint') &&
-        o.schema === schema &&
-        o.table === table
-      ) {
-        moved = withFields(o, { columns: swap(o.columns) });
-      }
-      return retargetReferences(moved, (ref) =>
-        ref.schema === schema && ref.table === table ? { ...ref, columns: swap(ref.columns) } : ref,
-      );
-    });
+  /** Move the objects that belong to a renamed object along with it (see `followRename`). */
+  #followRename(gone: ExpectedObject, target: ExpectedObject, unqualifiedSchema: string): void {
+    this.#transform((o) => (o === target ? o : followRename(o, gone, target, unqualifiedSchema)));
   }
 
   #deleteWhere(predicate: (o: ExpectedObject) => boolean): void {
@@ -194,9 +196,17 @@ export class NetEffect {
   }
 }
 
-/** Newer non-null attributes win; identity and the original source stay. */
+/**
+ * Newer non-null attributes win; identity and the original source stay. A definite statement over
+ * an IF NOT EXISTS one (`CREATE TABLE IF NOT EXISTS`, then `ALTER COLUMN ... TYPE`) asserts only
+ * what it says itself, since the conditional statement may have been skipped.
+ */
 function mergePresent<T extends ExpectedObject>(older: T, newer: T): T {
-  const merged: Record<string, unknown> = { ...older };
+  const base =
+    older.conditional !== undefined && newer.conditional === undefined
+      ? withoutConditional(existenceOnly(older))
+      : older;
+  const merged: Record<string, unknown> = { ...base };
   for (const [field, value] of Object.entries(newer)) {
     if (field !== 'source' && value !== null) merged[field] = value;
   }
@@ -241,31 +251,29 @@ function absentVersionOf(from: ExpectedObject, known: ExpectedObject): ExpectedO
   return from;
 }
 
-function isRelation(o: ExpectedObject): o is RelationObject {
-  return RELATION_KINDS.has(o.kind);
+/** Whether two objects come from the same statement (statements in a DO block share an index). */
+function sameStatement(a: SourceRef, b: SourceRef): boolean {
+  return a.statementIndex === b.statementIndex && a.excerpt === b.excerpt;
 }
 
-/**
- * Copy an object with some fields replaced and its key recomputed. Callers only replace fields the
- * object's kind has (checked by the surrounding narrowing); the type system cannot follow that
- * through a spread over the ExpectedObject union, so this is the one untyped update.
- */
-function withFields(o: ExpectedObject, fields: Record<string, unknown>): ExpectedObject {
-  return keyed({ ...o, ...fields });
+function withoutConditional<T extends ExpectedObject>(o: T): T {
+  const copy: T = { ...o };
+  delete copy.conditional;
+  return copy;
 }
 
-type Reference = NonNullable<ConstraintObject['references']>;
-
-/** Apply `fn` to a foreign key's referenced table, if `o` is a foreign key. */
-function retargetReferences(o: ExpectedObject, fn: (ref: Reference) => Reference): ExpectedObject {
-  if (o.kind !== 'constraint' || o.references === null) return o;
-  const references = fn(o.references);
-  return references === o.references ? o : { ...o, references };
+/** A renamed object under its new name: no generated name, not re-created, not conditional. */
+function withoutMarkers(o: ExpectedObject): ExpectedObject {
+  const copy: ExpectedObject = { ...o };
+  delete copy.recreated;
+  delete copy.conditional;
+  if (copy.kind === 'index' || copy.kind === 'constraint') delete copy.impliedName;
+  return copy;
 }
 
 /** Whether dropping `dropped` also removes what this file said about `o`. */
 function isRemovedWith(o: ExpectedObject, dropped: ExpectedObject, cascade: boolean): boolean {
-  if (parentKey(o) === dropped.key) return true;
+  if (dependsOn(o, dropped)) return true;
   switch (dropped.kind) {
     case 'function':
       // DROP FUNCTION f without an argument list drops the (single) f of any signature.
@@ -274,14 +282,6 @@ function isRemovedWith(o: ExpectedObject, dropped: ExpectedObject, cascade: bool
         o.kind === 'function' &&
         o.schema === dropped.schema &&
         o.name === dropped.name
-      );
-    case 'column':
-      // Indexes and constraints on a dropped column are dropped automatically.
-      return (
-        (o.kind === 'index' || o.kind === 'constraint') &&
-        o.schema === dropped.schema &&
-        o.table === dropped.table &&
-        (o.columns ?? []).includes(dropped.name)
       );
     case 'schema':
       return cascade && o.schema === dropped.name;
