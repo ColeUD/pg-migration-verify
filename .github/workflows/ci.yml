@@ -32,7 +32,10 @@ jobs:
       - run: npm run format:check
       - run: npm run test:unit
       - run: npm run build
-      # Post-build checks of the compiled CLI (e.g. a packed-tarball smoke test) belong after this step.
+      # The compiled bin over real stdio, as an MCP client starts it (no database configured).
+      - run: npm run test:smoke
+      # Lists exactly what would be published, so a stray file shows up in review.
+      - run: npm pack --dry-run
 
   integration:
     name: integration (postgres ${{ matrix.postgres }})
