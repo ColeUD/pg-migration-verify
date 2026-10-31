@@ -13,7 +13,7 @@
     "database_url": {
       "type": "string",
       "title": "Database URL",
-      "description": "Postgres connection string, ideally for a dedicated read-only role. Leave empty to use $PGMV_DATABASE_URL or $DATABASE_URL from your environment.",
+      "description": "Postgres connection string, ideally for a dedicated read-only role. Passed to the server as PGMV_DATABASE_URL. Leave empty to use $DATABASE_URL from the environment Claude Code runs in.",
       "sensitive": true
     }
   }

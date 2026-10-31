@@ -26,16 +26,21 @@ Target: `$ARGUMENTS` (empty means every migration).
    with it. Otherwise call `verify_all`.
 2. Call `diff_history` to compare the repository with the recorded history table.
 3. Present the result:
-   - Start with the summary line(s): `MATCH n/n` or `MISMATCH` per migration, and the totals.
-   - For each `MISMATCH`, list what is missing, different or unexpectedly still present, grouped
-     by migration file, with the statement line each object comes from.
+   - Start with the summary line(s): `MATCH n/n` or `MISMATCH m/n` per migration, and the totals,
+     including migrations "applied but NOT recorded" and "recorded in history but MISMATCH".
+   - For each `MISMATCH`, list what is `MISSING`, `DIFFERENT` or `UNEXPECTED` (dropped or renamed
+     by the migration but still present), grouped by migration file, with the statement line each
+     object comes from.
    - Explain `SUPERSEDED` (a later migration drops or renames the object, so it is checked there
-     instead) and `UNVERIFIABLE` notes (statements such as `DO` blocks or grants that cannot be
-     turned into catalog checks) in one sentence each, only if they occur.
+     instead), `UNVERIFIABLE` notes (statements such as grants, comments, data changes or dynamic
+     SQL in `DO` blocks that cannot be turned into catalog checks) and `NOTHING TO VERIFY` in one
+     sentence each, only if they occur.
    - Report history discrepancies from `diff_history` (only in repo, only in database, renamed).
 4. If something is missing, you may point out which statements of which migration would need to
    be re-applied, quoted as text for the user to review and run themselves.
 
 Never write to the database, never run SQL, and never offer to apply a fix automatically. If no
-database URL is configured, say so and explain that the plugin's `database_url` option or the
-`PGMV_DATABASE_URL` / `DATABASE_URL` environment variable provides it (ideally a read-only role).
+database URL is configured, say so and explain how to provide one: the plugin's `database_url`
+option (`claude plugin configure pg-migration-verify@pg-migration-verify`) or the `DATABASE_URL`
+environment variable; without the plugin, `PGMV_DATABASE_URL` or `DATABASE_URL`. Recommend a
+dedicated read-only role (README section "Read-only role").
