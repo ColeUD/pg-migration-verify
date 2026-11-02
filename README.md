@@ -2,7 +2,7 @@
 
 **An MCP server that tells your coding agent whether a Postgres/Supabase migration was really applied, by checking every object it should create against `pg_catalog`. Read-only by construction.**
 
-[![CI](https://github.com/OWNER/pg-migration-verify/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/pg-migration-verify/actions/workflows/ci.yml)
+[![CI](https://github.com/ColeUD/pg-migration-verify/actions/workflows/ci.yml/badge.svg)](https://github.com/ColeUD/pg-migration-verify/actions/workflows/ci.yml)
 [![npm version](https://img.shields.io/npm/v/pg-migration-verify.svg)](https://www.npmjs.com/package/pg-migration-verify)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
@@ -36,7 +36,7 @@ Requires Node.js 22 or later. The server runs with `npx`, so there is nothing el
 The repository is its own plugin marketplace. In Claude Code:
 
 ```text
-/plugin marketplace add OWNER/pg-migration-verify
+/plugin marketplace add ColeUD/pg-migration-verify
 /plugin install pg-migration-verify@pg-migration-verify
 ```
 
@@ -278,7 +278,7 @@ pg-migration-verify checks schema objects, and is honest about what it cannot se
 ## Development
 
 ```bash
-git clone https://github.com/OWNER/pg-migration-verify.git
+git clone https://github.com/ColeUD/pg-migration-verify.git
 cd pg-migration-verify
 npm ci
 ```

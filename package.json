@@ -14,13 +14,13 @@
   ],
   "license": "MIT",
   "author": "ColeUD",
-  "homepage": "https://github.com/OWNER/pg-migration-verify#readme",
+  "homepage": "https://github.com/ColeUD/pg-migration-verify#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/OWNER/pg-migration-verify.git"
+    "url": "git+https://github.com/ColeUD/pg-migration-verify.git"
   },
   "bugs": {
-    "url": "https://github.com/OWNER/pg-migration-verify/issues"
+    "url": "https://github.com/ColeUD/pg-migration-verify/issues"
   },
   "type": "module",
   "bin": {

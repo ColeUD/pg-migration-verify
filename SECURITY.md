@@ -19,7 +19,7 @@ Any of the following is a vulnerability and worth reporting:
 
 ## Reporting a vulnerability
 
-Please do not open a public issue. Report it privately through GitHub: on the repository page, open **Security**, then **Report a vulnerability** (a private security advisory), at https://github.com/OWNER/pg-migration-verify/security/advisories/new.
+Please do not open a public issue. Report it privately through GitHub: on the repository page, open **Security**, then **Report a vulnerability** (a private security advisory), at https://github.com/ColeUD/pg-migration-verify/security/advisories/new.
 
 Include the version (`npx pg-migration-verify --version`), the MCP client, and steps to reproduce. Do not include real connection strings or credentials; a synthetic example is enough.
 

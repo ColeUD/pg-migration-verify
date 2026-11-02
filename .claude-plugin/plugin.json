@@ -5,8 +5,8 @@
   "version": "0.1.0",
   "description": "Check that Postgres/Supabase migrations were really applied: compares the objects each migration should create, alter or drop against pg_catalog. Read-only by construction.",
   "author": { "name": "ColeUD" },
-  "homepage": "https://github.com/OWNER/pg-migration-verify",
-  "repository": "https://github.com/OWNER/pg-migration-verify",
+  "homepage": "https://github.com/ColeUD/pg-migration-verify",
+  "repository": "https://github.com/ColeUD/pg-migration-verify",
   "license": "MIT",
   "keywords": ["postgres", "postgresql", "supabase", "migrations", "schema", "mcp"],
   "userConfig": {
