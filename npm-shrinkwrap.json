@@ -12,7 +12,7 @@
         "@modelcontextprotocol/server": "2.4.0",
         "libpg-query": "18.2.2",
         "pg": "8.23.1",
-        "pgsql-deparser": "18.4.1",
+        "pgsql-deparser": "18.4.3",
         "zod": "4.6.7"
       },
       "bin": {
@@ -2319,9 +2319,9 @@
       }
     },
     "node_modules/pgsql-deparser": {
-      "version": "18.4.1",
-      "resolved": "https://registry.npmjs.org/pgsql-deparser/-/pgsql-deparser-18.4.1.tgz",
-      "integrity": "sha512-1X+9CweV6UIlD3BTvD6vz04ihoFSxovwYdT10ZXqsGOPxC3DCyjR8afOAr5Yxqi6Mnxc2alexpAUmSv1cb7uqA==",
+      "version": "18.4.3",
+      "resolved": "https://registry.npmjs.org/pgsql-deparser/-/pgsql-deparser-18.4.3.tgz",
+      "integrity": "sha512-84ijKETOYAvUaefqwoNTy/RCPdW8Zu0fZ0WeH28+2JGP6D4ZFdg7KXMkFBGk15JiTViIj3Tn174jeYiUywFWcQ==",
       "license": "MIT",
       "dependencies": {
         "@pgsql/quotes": "18.2.4",
