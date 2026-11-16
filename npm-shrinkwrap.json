@@ -10,7 +10,7 @@
       "license": "MIT",
       "dependencies": {
         "@modelcontextprotocol/server": "2.4.0",
-        "libpg-query": "18.2.2",
+        "libpg-query": "18.2.4",
         "pg": "8.23.1",
         "pgsql-deparser": "18.4.1",
         "zod": "4.6.7"
@@ -1776,9 +1776,9 @@
       }
     },
     "node_modules/libpg-query": {
-      "version": "18.2.2",
-      "resolved": "https://registry.npmjs.org/libpg-query/-/libpg-query-18.2.2.tgz",
-      "integrity": "sha512-BOKY0X05vnxkFe+FD8JH71sSO560UKoSRv9Fsy67zapmryhqcew+4Hq0Phu8a6mcENklK7LiHJi0d0j8DbIb4A==",
+      "version": "18.2.4",
+      "resolved": "https://registry.npmjs.org/libpg-query/-/libpg-query-18.2.4.tgz",
+      "integrity": "sha512-7nqWUm+39v/fYgWP0qR+sYC7tyhmW8lctqAzx7bdKG6V0ySr9G1lcY43BdZM5+lxVSzL0Y5Yy6eM9e+uL7T79w==",
       "license": "MIT",
       "dependencies": {
         "@pgsql/types": "^18.0.0"
